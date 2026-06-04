@@ -24,6 +24,7 @@
 从知识库根目录执行：
 
 ```bash
+python3 scripts/source_reader.py remote-read <source> --read-depth preview --format md
 python3 scripts/source_reader.py <source> --mode auto --browser-profile .source-reader/profiles/default --interactive-login --login-timeout-ms 180000 --read-depth preview --format md
 python3 scripts/kb.py raw <source> --read-depth standard
 python3 scripts/kb.py raw <source> --mode auto --browser-profile .source-reader/profiles/default --interactive-login --login-timeout-ms 180000 --read-depth standard
@@ -32,7 +33,19 @@ python3 scripts/kb.py publish-prompt <raw-file>
 python3 scripts/source_reader.py --doctor --format md
 ```
 
+优先使用 MCP tool。未配置 MCP 时使用 `remote-read`。它只连接本机 `127.0.0.1` source-reader 服务；外部联网、Playwright、缓存和登录态由服务负责。服务未启动时先执行 `python3 scripts/source_reader.py serve --host 127.0.0.1 --port 8765`，不要回退到 Claude 内置 Fetch。
+
 JS 渲染、登录态、语雀、飞书、Notion、知识星球等页面优先使用上面的 `auto + browser-profile + interactive-login` 命令。它会先走低成本 fast reader，遇到登录墙或 JS 空壳时自动切到 Playwright 持久化 profile。
+
+读取结果中的 `actions` / `Next Operations` 是标准按钮协议。后续操作优先使用其中的命令：
+
+- `login_with_browser`：登录或授权后重试。
+- `continue_deep_read`：用户确认后继续深读。
+- `extract_outline`：只看结构和关键概念。
+- `extract_code`：只看代码、命令、配置和 API 示例。
+- `summarize_for_kb`：生成知识库建议，不写 wiki。
+- `save_raw`：用户明确“沉淀”后创建 raw。
+- `mark_result_good` / `mark_result_bad`：记录读取质量反馈。
 
 ## 状态规则
 

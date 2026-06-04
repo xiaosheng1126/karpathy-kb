@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "source-reader": {
+      "command": "python3",
+      "args": ["scripts/source_reader.py", "mcp"],
+      "cwd": "."
+    }
+  }
+}

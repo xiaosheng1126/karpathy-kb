@@ -42,12 +42,66 @@ python3 scripts/source_reader.py <url> --mode auto --browser-profile .source-rea
 python3 scripts/source_reader.py <url> --mode browser --browser-profile .source-reader/profiles/default --interactive-login --format md
 python3 scripts/source_reader.py <url> --mode auto --browser-profile .source-reader/profiles/default --interactive-login --login-timeout-ms 180000 --read-depth preview --format md
 python3 scripts/source_reader.py <url> --mode auto --read-depth preview --format md
+python3 scripts/source_reader.py serve --host 127.0.0.1 --port 8765
+python3 scripts/source_reader.py remote-read <url> --read-depth preview --format md
+python3 scripts/source_reader.py mcp
 python3 scripts/source_reader.py --doctor --format md
 ```
 
 - `fast`：默认模式，HTTP 读取，成本最低。
 - `browser`：强制使用 Playwright 持久化 profile，适合语雀、飞书、Notion、JS 渲染站点。
 - `auto`：先 `fast`，如果检测到登录墙或 JS 空壳，再切到 `browser`。配合 `--interactive-login` 时，不需要先询问用户是否重试；工具会直接打开持久化浏览器等待登录。
+- `serve`：启动本机 `127.0.0.1` source-reader 服务。外部联网、Playwright、缓存和登录态由服务进程负责。
+- `remote-read`：Agent 日常优先使用这个入口，只访问本机服务，不直接由 Agent 沙箱访问公网。
+- `mcp`：启动 stdio MCP server。支持 MCP 的 Agent 应优先使用这个入口，避免把外部读取做成普通 shell 网络命令。
+
+## 本地服务
+
+安装时推荐一次性准备运行时并启动服务：
+
+```bash
+python3 scripts/install.py --target both --install-runtime --install-mcp --start-service
+```
+
+这会准备：
+
+- Node/npm 项目依赖。
+- Playwright Chromium。
+- `.source-reader/profiles/default` 登录态目录。
+- `.source-reader/mcp/` MCP 模板和运行时元数据。
+- `.source-reader/source-reader.pid` 服务 PID。
+- `.source-reader/source-reader.log` 服务日志。
+
+服务只监听 `127.0.0.1`，不会暴露到局域网。后续 Codex / Claude / MCP 应优先调用：
+
+```bash
+python3 scripts/source_reader.py remote-read <source> --read-depth preview --format md
+python3 scripts/source_reader.py remote-action continue_deep_read --source <source> --format md
+```
+
+支持 MCP 的客户端可以使用：
+
+```bash
+python3 scripts/source_reader.py mcp
+```
+
+安装器会在 `.source-reader/mcp/source-reader.runtime.json` 写入当前 vault 的绝对路径、MCP 命令和本地服务端口；`source-reader.codex.toml`、`source-reader.claude.json` 是接入 Codex / Claude 的配置片段。
+
+确认要注册到当前机器的全局 Agent 配置时执行：
+
+```bash
+python3 scripts/install.py --target both --install-runtime --install-mcp --register-mcp both --start-service
+```
+
+`--register-mcp codex` 会备份并更新 `~/.codex/config.toml`；`--register-mcp claude` 会调用 `claude mcp add --scope user source-reader`。已有同名 MCP 时默认跳过，替换时使用 `--force`。
+
+MCP tools:
+
+- `source_reader_read`
+- `source_reader_action`
+- `source_reader_feedback`
+
+只有服务未启动、用户首次登录、验证码、账号权限不足、登录态过期这类必须用户参与的情况，才需要用户介入。
 
 ## 阅读深度
 
@@ -59,17 +113,63 @@ python3 scripts/source_reader.py --doctor --format md
 
 ## 下一步操作协议
 
-`source_reader.py` 会在 JSON 输出里提供 `preview` 和 `next_actions`，在 Markdown 输出里显示 `Quick Preview` 和 `Next Operations`。
+`source_reader.py` 会在 JSON 输出里提供 `preview`、`actions` 和兼容字段 `next_actions`，在 Markdown 输出里显示 `Quick Preview` 和 `Next Operations`。
 
 当前动作包括：
 
-- `深读全文`：用 `--read-depth full` 重新读取。
-- `结构化总结`：提示 LLM 基于当前内容输出背景、核心观点、风险和建议。
-- `沉淀为 raw`：调用 `scripts/kb.py raw` 进入 Obsidian raw 流程。
-- `追问细节`：保留给用户针对章节、实现、风险继续提问。
-- `登录后重试`：当读取被登录墙或错误阻断时出现，使用 Playwright 持久化 profile 重新读取。
+- `continue_deep_read`：用 `--read-depth full` 重新读取。
+- `extract_outline`：只提取结构、大纲、关键概念和内容地图。
+- `extract_code`：只提取代码、命令、配置、API 示例和集成步骤。
+- `summarize_for_kb`：提示 LLM 基于当前内容输出背景、核心观点、风险和建议，不直接写 wiki。
+- `save_raw`：调用 `scripts/kb.py raw` 进入 Obsidian raw 流程。
+- `ask_followup`：保留给用户针对章节、实现、风险继续提问。
+- `login_with_browser`：当读取被登录墙或错误阻断时出现，使用 Playwright 持久化 profile 重新读取。
+- `mark_result_good` / `mark_result_bad`：记录这次读取是否满足预期，用于后续复盘。
 
 这套“操作”先以稳定数据协议存在，后续可以映射到聊天 UI、Obsidian 命令、Raycast 或快捷指令。
+
+动作可以直接执行：
+
+```bash
+python3 scripts/source_reader.py action continue_deep_read --source <source> --format md
+python3 scripts/source_reader.py action extract_outline --source <source> --format md
+python3 scripts/source_reader.py action extract_code --source <source> --format md
+python3 scripts/source_reader.py action login_with_browser --source <source> --format md
+```
+
+服务模式下优先使用：
+
+```bash
+python3 scripts/source_reader.py remote-action continue_deep_read --source <source> --format md
+python3 scripts/source_reader.py remote-action extract_outline --source <source> --format md
+python3 scripts/source_reader.py remote-action extract_code --source <source> --format md
+python3 scripts/source_reader.py remote-action login_with_browser --source <source> --format md
+```
+
+## 复盘和反馈
+
+每次普通读取和 action 执行都会写入轻量 run log：
+
+```text
+.source-reader/runs/<run_id>.json
+```
+
+run log 只用于复盘工具表现，不进入 wiki。它记录输入、读取策略、读取质量、token 估算、actions 和用户反馈。
+
+反馈命令：
+
+```bash
+python3 scripts/source_reader.py feedback mark_good --run-id <run_id>
+python3 scripts/source_reader.py feedback mark_bad --run-id <run_id> --reason "正文不完整" --expected "希望读到正文而不是导航"
+```
+
+近期复盘：
+
+```bash
+python3 scripts/source_reader.py review-runs --limit 20 --format md
+```
+
+source-reader 可以基于 run log 给出规则建议，但不自动修改代码、全局配置或 wiki。策略变更需要用户确认。
 
 第一次使用 browser profile 时，需要让 Playwright 打开可见 Chrome，手动登录目标站点。后续同一 profile 会复用登录态。不要直接使用日常 Chrome 主 Profile，避免锁冲突和隐私边界不清。
 
@@ -80,7 +180,7 @@ python3 scripts/source_reader.py --doctor --format md
 Playwright 是可选依赖；需要 browser 模式时在项目目录安装：
 
 ```bash
-python3 scripts/install.py --target both --install-playwright
+python3 scripts/install.py --target both --install-runtime --install-mcp --start-service
 ```
 
 ## 统一输出

@@ -99,17 +99,27 @@ python3 scripts/install.py --target both --vault-name "Obsidian Vault"
 python3 scripts/install.py --target both --vault /path/to/obsidian-vault
 ```
 
-如果希望安装时顺手准备登录态/JS 页面读取能力：
+如果希望安装时一次性准备登录态/JS 页面读取能力、本地服务和 MCP 入口：
 
 ```bash
-python3 scripts/install.py --target both --vault /path/to/obsidian-vault --install-playwright
+python3 scripts/install.py --target both --vault /path/to/obsidian-vault --install-runtime --install-mcp --start-service
 ```
 
-自动检测 vault 时也可以直接安装 browser 依赖：
+自动检测 vault 时也可以直接准备运行时、MCP 元数据并启动本地 source-reader 服务：
 
 ```bash
-python3 scripts/install.py --target both --install-playwright
+python3 scripts/install.py --target both --install-runtime --install-mcp --start-service
 ```
+
+`--install-runtime` 会执行 `npm install` 并安装 Playwright Chromium；`--install-mcp` 会在 `.source-reader/mcp/` 写入 source-reader MCP 模板和运行时元数据；`--start-service` 会启动本 vault 下的 `127.0.0.1:8765` 本地读取服务，日志写入 `.source-reader/source-reader.log`。后续 Agent 优先通过 MCP 或本地服务读取 URL，避免每次由 Agent 沙箱直接申请外网访问。
+
+如果确认要把 source-reader 注册进当前机器的 Codex / Claude 全局 MCP 配置，可以显式加：
+
+```bash
+python3 scripts/install.py --target both --install-runtime --install-mcp --register-mcp both --start-service
+```
+
+这会修改 `~/.codex/config.toml`，并通过 `claude mcp add --scope user` 注册 Claude Code。安装器会给 Codex 配置生成备份；已有 `source-reader` MCP 时默认跳过，确实需要替换时再加 `--force`。
 
 只安装某一侧：
 
@@ -138,12 +148,22 @@ CLAUDE.md
 .claude/commands/update-kb.md
 ```
 
+MCP 适配会生成：
+
+```text
+.source-reader/mcp/source-reader.codex.toml
+.source-reader/mcp/source-reader.claude.json
+.source-reader/mcp/source-reader.runtime.json
+```
+
+安装器默认不直接修改 Codex / Claude 的全局 MCP 配置。全局注册属于用户环境配置；确认后使用 `--register-mcp codex|claude|both`。
+
 两侧都复用同一套 `scripts/source_reader.py` 和 `scripts/kb.py`，因此读取网页、GitHub、PDF、视频字幕、JS 渲染页面和登录态页面的能力不会分叉。
 
 对登录态页面，Agent 应直接使用：
 
 ```bash
-python3 scripts/source_reader.py <source> --mode auto --browser-profile .source-reader/profiles/default --interactive-login --login-timeout-ms 180000 --read-depth preview --format md
+python3 scripts/source_reader.py remote-read <source> --read-depth preview --format md
 ```
 
-它会先低成本读取；遇到登录墙或 JS 空壳时自动打开持久化浏览器 profile。用户只需要在浏览器里完成登录，后续同域名页面会复用登录态。
+它只连接本地 source-reader 服务；服务内部会先低成本读取，遇到登录墙或 JS 空壳时自动使用持久化浏览器 profile。用户只需要在首次登录或登录态失效时去浏览器完成授权，后续同域名页面会复用登录态。

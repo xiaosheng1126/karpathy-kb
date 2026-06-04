@@ -19,17 +19,29 @@ You maintain the user's Obsidian knowledge base. The goal is not to save every s
 Run from the knowledge base root.
 
 ```bash
+python3 scripts/source_reader.py remote-read <source> --read-depth preview --format md
 python3 scripts/source_reader.py <source> --mode auto --browser-profile .source-reader/profiles/default --interactive-login --login-timeout-ms 180000 --read-depth preview --format md
 python3 scripts/kb.py raw <source> --read-depth standard
 python3 scripts/kb.py raw <source> --mode auto --browser-profile .source-reader/profiles/default --interactive-login --login-timeout-ms 180000 --read-depth standard
 python3 scripts/kb.py review <raw-file>
 python3 scripts/kb.py publish-prompt <raw-file>
-python3 scripts/install.py --target both --install-playwright
+python3 scripts/install.py --target both --install-runtime --install-mcp --start-service
 python3 scripts/source_reader.py --doctor --format md
 ```
 
+Prefer the MCP tool when available. If MCP is not configured, use `remote-read`: it calls the local source-reader service on `127.0.0.1`, while the service owns external networking, Playwright, cache, and browser profiles. If the service is unavailable, start it with `python3 scripts/source_reader.py serve --host 127.0.0.1 --port 8765` or fall back to the direct auto-mode command.
+
 Use auto mode for JS-rendered pages, login-gated pages, Yuque, Feishu, Notion, Knowledge Star, and similar sources. Reuse `.source-reader/profiles/default` for persistent login state. If Playwright is missing, run the installer command above once instead of asking the user which retry path to take.
 If browser reading still fails, run `source_reader.py --doctor` and follow explicit setup recommendations before asking the user.
+
+After each read, inspect `actions` / `Next Operations` first. Treat them as the supported button protocol:
+
+- Execute `login_with_browser` when auth is required.
+- Execute `continue_deep_read`, `extract_outline`, or `extract_code` when the user asks to continue in that direction.
+- Use `summarize_for_kb` for review advice, but do not write wiki.
+- Use `save_raw` only when the user says to deposit.
+- Use `mark_result_good` / `mark_result_bad` when the user gives feedback about read quality.
+- Do not invent a separate retry flow if an action already covers it.
 
 ## Rules
 

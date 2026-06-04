@@ -19,7 +19,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from source_reader import classify_and_read
+from source_reader import DEFAULT_SERVICE_HOST, DEFAULT_SERVICE_PORT, classify_and_read, read_via_service
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -214,17 +214,34 @@ def create_raw(
     headless: bool = False,
     interactive_login: bool = False,
     login_timeout_ms: int = 180000,
+    use_service: bool = False,
+    service_host: str = DEFAULT_SERVICE_HOST,
+    service_port: int = DEFAULT_SERVICE_PORT,
 ) -> pathlib.Path:
-    result = classify_and_read(
-        source,
-        max_chars=max_chars,
-        mode=mode,
-        browser_profile=browser_profile,
-        headless=headless,
-        interactive_login=interactive_login,
-        login_timeout_ms=login_timeout_ms,
-        read_depth=read_depth,
-    )
+    if use_service:
+        result = read_via_service(
+            source,
+            service_host,
+            service_port,
+            max_chars,
+            mode,
+            read_depth,
+            browser_profile or ".source-reader/profiles/default",
+            headless,
+            interactive_login,
+            login_timeout_ms,
+        )
+    else:
+        result = classify_and_read(
+            source,
+            max_chars=max_chars,
+            mode=mode,
+            browser_profile=browser_profile,
+            headless=headless,
+            interactive_login=interactive_login,
+            login_timeout_ms=login_timeout_ms,
+            read_depth=read_depth,
+        )
     is_url = bool(result.url)
     final_title = title or result.title
     today = dt.date.today().isoformat()
@@ -244,6 +261,7 @@ def create_raw(
         "token_policy": result.token_policy,
         "read_depth": result.read_depth,
         "preview": result.preview,
+        "actions": result.actions,
         "next_actions": result.next_actions,
         "metadata": result.metadata,
         "errors": result.errors,
@@ -323,6 +341,9 @@ def main(argv: list[str]) -> int:
     raw.add_argument("--headless", action="store_true", help="run browser mode headless")
     raw.add_argument("--interactive-login", action="store_true", help="wait for manual login when browser mode reaches an auth page")
     raw.add_argument("--login-timeout-ms", type=int, default=180000, help="manual login wait timeout in milliseconds")
+    raw.add_argument("--use-service", action="store_true", help="read through local source-reader service")
+    raw.add_argument("--service-host", default=DEFAULT_SERVICE_HOST, help="source-reader service host")
+    raw.add_argument("--service-port", type=int, default=DEFAULT_SERVICE_PORT, help="source-reader service port")
 
     list_cmd = sub.add_parser("list", help="list raw notes")
     list_cmd.add_argument("--status", help="filter by raw status, for example fetched")
@@ -346,6 +367,9 @@ def main(argv: list[str]) -> int:
             headless=args.headless,
             interactive_login=args.interactive_login,
             login_timeout_ms=args.login_timeout_ms,
+            use_service=args.use_service,
+            service_host=args.service_host,
+            service_port=args.service_port,
         )
         print(target.relative_to(ROOT))
         return 0
