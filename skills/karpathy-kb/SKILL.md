@@ -34,13 +34,13 @@ Prefer the MCP tool when available. If MCP is not configured, use `remote-read`:
 Use auto mode for JS-rendered pages, login-gated pages, Yuque, Feishu, Notion, Knowledge Star, and similar sources. Reuse `.source-reader/profiles/default` for persistent login state. If Playwright is missing, run the installer command above once instead of asking the user which retry path to take.
 If browser reading still fails, run `source_reader.py --doctor` and follow explicit setup recommendations before asking the user.
 
-After each read, inspect `actions` / `Next Operations` first. Treat them as the supported button protocol:
+After each read, inspect `actions` / `Next Operations` first. Treat them as the supported operation protocol. Prefer `scope=reader` actions for generic reading, and only use `scope=adapter` actions inside the karpathy-kb workflow:
 
-- Execute `login_with_browser` when auth is required.
-- Execute `continue_deep_read`, `extract_outline`, or `extract_code` when the user asks to continue in that direction.
-- Use `summarize_for_kb` for review advice, but do not write wiki.
-- Use `save_raw` only when the user says to deposit.
-- Use `mark_result_good` / `mark_result_bad` when the user gives feedback about read quality.
+- Execute `login_with_browser` (`reader`) when auth is required.
+- Execute `continue_deep_read`, `extract_outline`, or `extract_code` (`reader`) when the user asks to continue in that direction.
+- Use `mark_result_good` / `mark_result_bad` (`reader`) when the user gives feedback about read quality.
+- Use `summarize_for_kb` (`adapter:karpathy-kb`) for review advice, but do not write wiki.
+- Use `save_raw` (`adapter:karpathy-kb`) only when the user says to deposit.
 - Do not invent a separate retry flow if an action already covers it.
 
 ## Rules

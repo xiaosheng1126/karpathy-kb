@@ -244,6 +244,8 @@ def action(
     prompt: str = "",
     requires_confirmation: bool = True,
     category: str = "read",
+    scope: str = "reader",
+    adapter: str = "",
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": action_id,
@@ -251,7 +253,10 @@ def action(
         "description": description,
         "requires_confirmation": requires_confirmation,
         "category": category,
+        "scope": scope,
     }
+    if adapter:
+        payload["adapter"] = adapter
     if command:
         payload["command"] = command
     if prompt:
@@ -294,6 +299,8 @@ def build_next_actions(
             "基于当前读取内容生成摘要、适用场景、风险和是否值得沉淀的建议，不直接写 wiki。",
             prompt="请基于上面的 Source Reader 输出做知识库向总结，并指出是否值得继续沉淀。",
             category="review",
+            scope="adapter",
+            adapter="karpathy-kb",
         ),
         action(
             "save_raw",
@@ -301,6 +308,8 @@ def build_next_actions(
             "创建 Obsidian raw，保留原始内容，并把总结和建议留给确认流程。",
             command=build_kb_raw_command(source, mode, browser_profile, headless, interactive_login, login_timeout_ms),
             category="kb",
+            scope="adapter",
+            adapter="karpathy-kb",
         ),
         action(
             "ask_followup",
@@ -1266,8 +1275,12 @@ def to_markdown(result: ReaderOutput) -> str:
 
 
 def format_action(action: dict[str, str]) -> str:
+    scope = action.get("scope", "reader")
+    adapter = action.get("adapter", "")
+    scope_label = f"{scope}:{adapter}" if adapter else scope
     lines = [
         f"- [{action.get('label', action.get('id', 'action'))}] `{action.get('id', '')}`",
+        f"  - Scope: `{scope_label}`",
         f"  - {action.get('description', '')}",
     ]
     if action.get("command"):

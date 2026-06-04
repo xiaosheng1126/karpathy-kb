@@ -37,15 +37,15 @@ python3 scripts/source_reader.py --doctor --format md
 
 JS 渲染、登录态、语雀、飞书、Notion、知识星球等页面优先使用上面的 `auto + browser-profile + interactive-login` 命令。它会先走低成本 fast reader，遇到登录墙或 JS 空壳时自动切到 Playwright 持久化 profile。
 
-读取结果中的 `actions` / `Next Operations` 是标准按钮协议。后续操作优先使用其中的命令：
+读取结果中的 `actions` / `Next Operations` 是标准操作协议。优先执行 `scope=reader` 的通用读取动作；只有当前任务已经进入 karpathy-kb 工作流时，才执行 `scope=adapter` 的知识库动作。
 
-- `login_with_browser`：登录或授权后重试。
-- `continue_deep_read`：用户确认后继续深读。
-- `extract_outline`：只看结构和关键概念。
-- `extract_code`：只看代码、命令、配置和 API 示例。
-- `summarize_for_kb`：生成知识库建议，不写 wiki。
-- `save_raw`：用户明确“沉淀”后创建 raw。
-- `mark_result_good` / `mark_result_bad`：记录读取质量反馈。
+- `login_with_browser` (`reader`)：登录或授权后重试。
+- `continue_deep_read` (`reader`)：用户确认后继续深读。
+- `extract_outline` (`reader`)：只看结构和关键概念。
+- `extract_code` (`reader`)：只看代码、命令、配置和 API 示例。
+- `mark_result_good` / `mark_result_bad` (`reader`)：记录读取质量反馈。
+- `summarize_for_kb` (`adapter:karpathy-kb`)：生成知识库建议，不写 wiki。
+- `save_raw` (`adapter:karpathy-kb`)：用户明确“沉淀”后创建 raw。
 
 ## 状态规则
 

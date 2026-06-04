@@ -1,6 +1,6 @@
 # Source Reader
 
-source-reader 是独立能力，负责把各种输入读取并规范化为 raw source。它服务知识库，也可以服务普通开发任务。
+source-reader 是独立的智能内容读取器，负责把各种输入读取成 LLM 可用的结构化结果。它可以被知识库、开发任务、代码审查、资料分析或其他 Agent 复用，但自身不维护个人知识库状态。
 
 ## 为什么独立
 
@@ -10,6 +10,12 @@ source-reader 是独立能力，负责把各种输入读取并规范化为 raw s
 - knowledge-base 解决：这些信息对用户有什么长期价值。
 
 这样 `读取 <source>` 可以只用于当前任务，`沉淀 <source>` 才进入知识库流程。
+
+source-reader 的边界：
+
+- 做：识别输入类型、选择低成本读取策略、处理 JS 渲染/登录态、输出正文/元数据/质量/下一步操作。
+- 不做：决定资料是否值得长期保存、写 raw、更新 wiki、维护用户知识结构。
+- 可以提供适配动作：例如 karpathy-kb 会把 `save_raw` 映射到 `scripts/kb.py raw`，但这不是 reader 核心职责。
 
 ## V1 支持范围
 
@@ -115,16 +121,21 @@ MCP tools:
 
 `source_reader.py` 会在 JSON 输出里提供 `preview`、`actions` 和兼容字段 `next_actions`，在 Markdown 输出里显示 `Quick Preview` 和 `Next Operations`。
 
+每个 action 都带有 `scope`：
+
+- `reader`：source-reader 核心动作，可以被任何客户端直接使用。
+- `adapter`：上层系统动作，例如 karpathy-kb 的 raw/wiki 工作流。客户端可以展示，但不应把它当成 reader 核心能力。
+
 当前动作包括：
 
-- `continue_deep_read`：用 `--read-depth full` 重新读取。
-- `extract_outline`：只提取结构、大纲、关键概念和内容地图。
-- `extract_code`：只提取代码、命令、配置、API 示例和集成步骤。
-- `summarize_for_kb`：提示 LLM 基于当前内容输出背景、核心观点、风险和建议，不直接写 wiki。
-- `save_raw`：调用 `scripts/kb.py raw` 进入 Obsidian raw 流程。
-- `ask_followup`：保留给用户针对章节、实现、风险继续提问。
-- `login_with_browser`：当读取被登录墙或错误阻断时出现，使用 Playwright 持久化 profile 重新读取。
-- `mark_result_good` / `mark_result_bad`：记录这次读取是否满足预期，用于后续复盘。
+- `continue_deep_read` (`reader`)：用 `--read-depth full` 重新读取。
+- `extract_outline` (`reader`)：只提取结构、大纲、关键概念和内容地图。
+- `extract_code` (`reader`)：只提取代码、命令、配置、API 示例和集成步骤。
+- `ask_followup` (`reader`)：保留给用户针对章节、实现、风险继续提问。
+- `login_with_browser` (`reader`)：当读取被登录墙或错误阻断时出现，使用 Playwright 持久化 profile 重新读取。
+- `mark_result_good` / `mark_result_bad` (`reader`)：记录这次读取是否满足预期，用于后续复盘。
+- `summarize_for_kb` (`adapter:karpathy-kb`)：提示 LLM 基于当前内容输出背景、核心观点、风险和建议，不直接写 wiki。
+- `save_raw` (`adapter:karpathy-kb`)：调用 `scripts/kb.py raw` 进入 Obsidian raw 流程。
 
 这套“操作”先以稳定数据协议存在，后续可以映射到聊天 UI、Obsidian 命令、Raycast 或快捷指令。
 
@@ -183,6 +194,36 @@ Playwright 是可选依赖；需要 browser 模式时在项目目录安装：
 python3 scripts/install.py --target both --install-runtime --install-mcp --start-service
 ```
 
+## 策略配置方向
+
+source-reader 后续可以支持轻量策略配置，但配置只影响“怎么读”，不影响“要不要沉淀”。
+
+建议配置文件：
+
+```json
+{
+  "default_read_depth": "preview",
+  "max_chars": {
+    "preview": 6000,
+    "standard": 24000,
+    "full": 80000
+  },
+  "browser_profile": ".source-reader/profiles/default",
+  "domains": {
+    "github.com": {
+      "repo_strategy": "readme_first",
+      "issue_comment_limit": 12
+    },
+    "yuque.com": {
+      "mode": "auto",
+      "prefer_browser_profile": true
+    }
+  }
+}
+```
+
+短期只建议加入这些策略：默认读取深度、每层 token 预算、域名级读取模式、GitHub issue/PR 评论上限、登录态 profile。不要把用户偏好、知识分类、wiki 目标写进 source-reader 配置。
+
 ## 统一输出
 
 ```yaml
@@ -205,10 +246,8 @@ errors:
 
 正文输出应包含：
 
-- 原始内容或可追溯摘录
 - 读取质量说明
-- 结构化摘要
-- 对用户的建议
-- 是否建议发布到 wiki
-- 建议创建或更新的 wiki 条目
-- 需要用户确认的问题
+- 原始内容或可追溯摘录
+- 快速预览
+- 下一步操作
+- 错误和降级信息

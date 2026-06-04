@@ -24,7 +24,7 @@ karpathy-kb/
   raw/                      # 原始资料、读取结果、摘要和建议
   scripts/                  # 本地辅助脚本
   wiki/                     # 经确认后沉淀的长期知识
-  source-reader/            # 独立的输入读取能力设计
+  source-reader/            # 独立的智能内容读取器设计
   templates/                # raw/wiki 模板
 ```
 
@@ -47,7 +47,7 @@ python3 scripts/source_reader.py <source> --format md --read-depth preview
 python3 scripts/source_reader.py <source> --format json --max-chars 16000
 ```
 
-`source_reader.py` 只负责读取输入，并尽量节省 token：
+`source_reader.py` 是独立的智能内容读取器，只负责把 source 读成 LLM 可用的结构化结果，并尽量节省 token：
 
 - GitHub repo：默认只读取 README，不遍历整个项目。
 - GitHub blob：读取 raw 文件，不读取页面外壳。
@@ -57,6 +57,8 @@ python3 scripts/source_reader.py <source> --format json --max-chars 16000
 - 普通网页：抽取 HTML 文本，并按 `--max-chars` 做头尾保留。
 - 本地文件：按文本读取，HTML 会抽正文。
 - 大文档：先用 `--read-depth preview` 输出快速预览和下一步动作，再由用户决定是否深读、总结或沉淀。
+
+它不负责判断资料是否值得进入个人知识库，也不直接维护 raw/wiki 生命周期。`summarize_for_kb`、`save_raw` 这类动作属于 karpathy-kb 适配层，核心 reader 只保证“尽可能读到、读准、低成本输出”。
 
 `kb.py` 用于把 source-reader 的结果生成 raw 草稿：
 
