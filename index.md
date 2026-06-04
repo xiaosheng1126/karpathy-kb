@@ -14,6 +14,5 @@
 
 - 命令约定：[[commands]]
 - Raw：[[raw/README]]
-- Source Reader：[[source-reader/README]]
 - 个人偏好：[[profile]]
 - 维护规则：[[AGENTS]]

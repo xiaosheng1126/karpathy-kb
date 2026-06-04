@@ -19,7 +19,7 @@
 
 LLM 行为：
 
-- 调用 source-reader 获取内容。
+- 调用 MCP `source_reader_read` 获取内容。
 - 直接回答当前问题。
 - 不创建文件。
 - 如果发现内容明显值得沉淀，可以建议用户改用 `沉淀`。
@@ -34,7 +34,7 @@ LLM 行为：
 
 LLM 行为：
 
-- 调用 source-reader 读取内容。
+- 调用 MCP `source_reader_read` 或 `python3 scripts/kb.py raw <source>` 读取内容。
 - 创建 `raw/YYYY-MM-DD-短标题.md`。
 - 在 raw 中写入原文或可追溯摘录、自动摘要、建议、待确认问题。
 - 向用户展示摘要和建议，询问是否发布到 wiki。
@@ -42,26 +42,21 @@ LLM 行为：
 本地辅助：
 
 ```bash
-python3 scripts/source_reader.py <source> --format md --max-chars 24000
-python3 scripts/source_reader.py <source> --format md --read-depth preview
-python3 scripts/source_reader.py <source> --mode auto --browser-profile .source-reader/profiles/default --format md --max-chars 24000
-python3 scripts/source_reader.py <source> --mode browser --browser-profile .source-reader/profiles/default --interactive-login --format md --max-chars 24000
 python3 scripts/kb.py raw <source> --max-chars 24000
 python3 scripts/kb.py raw <source> --read-depth standard
-python3 scripts/kb.py raw <source> --mode auto --browser-profile .source-reader/profiles/default --max-chars 24000
-python3 scripts/kb.py raw <source> --mode browser --browser-profile .source-reader/profiles/default --interactive-login --max-chars 24000
+python3 scripts/kb.py raw <source> --mode auto --interactive-login
 python3 scripts/kb.py review <raw-file>
 ```
 
-`source_reader.py` 可单独用于 `读取` 场景；`kb.py raw` 会调用同一套读取策略创建 raw。
+`kb.py raw` 走本机 source-reader 服务（默认 `127.0.0.1:8765`）。读完后的下一步动作来自服务返回的 `Next Operations` / `actions`：
 
-`source_reader.py` 的输出包含 `Quick Preview` 和 `Next Operations`，这些动作是当前 CLI 版本的下一步操作：
-
-- 深读全文
-- 结构化总结
-- 沉淀为 raw
+- 深读全文（`continue_deep_read`）
+- 结构化总结（`extract_outline`）
+- 沉淀为 raw（`save_raw`）
 - 追问细节
-- 登录后重试
+- 登录后重试（`login_with_browser`）
+
+直接读取（不落 raw）的场景，优先用 MCP `source_reader_read`，不要再调本地脚本。
 
 ## 发布
 
@@ -103,4 +98,4 @@ python3 scripts/kb.py publish-prompt <raw-file>
 对比 <source A> 和 <source B>
 ```
 
-用途：当前任务分析为主，默认不沉淀。只有用户说“沉淀这次对比”时才创建 raw。
+用途：当前任务分析为主，默认不沉淀。只有用户说"沉淀这次对比"时才创建 raw。

@@ -1,21 +1,20 @@
 {
   "name": "karpathy-kb",
   "version": "0.1.0",
-  "description": "Maintain a personal Obsidian knowledge base with source-reader and a Karpathy-style LLM-maintained wiki workflow.",
+  "description": "Maintain a personal Obsidian knowledge base with a Karpathy-style LLM-maintained wiki workflow, backed by the standalone source-reader MCP server.",
   "author": {
     "name": "Personal"
   },
   "license": "MIT",
   "keywords": [
     "knowledge-base",
-    "obsidian",
-    "source-reader"
+    "obsidian"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Karpathy KB",
-    "shortDescription": "Obsidian knowledge workflow with source-reader.",
-    "longDescription": "Maintain a personal Obsidian knowledge base using raw notes, confirmed wiki publishing, and token-aware source reading.",
+    "shortDescription": "Obsidian knowledge workflow.",
+    "longDescription": "Maintain a personal Obsidian knowledge base using raw notes and confirmed wiki publishing; source reading is delegated to the standalone source-reader MCP server.",
     "developerName": "Personal",
     "category": "Productivity",
     "capabilities": [

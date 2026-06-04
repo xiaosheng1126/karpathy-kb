@@ -10,11 +10,24 @@
 - wiki 只有在用户明确确认后才生成或更新。
 - 持久状态只保留 `fetched` 和 `published`，中间的 reviewed/approved 只存在于对话里。
 
+## Source Reader 边界
+
+读 URL / PDF / 视频字幕 / 登录态页面这些"输入层"职责，已经独立成 `~/Documents/source-reader/`，并通过 MCP（server 名 `source-reader`）注册到 Claude / Codex。
+
+本仓库不再包含 reader 实现：
+
+- Claude / Codex 直接调用 MCP 工具 `source_reader_read` / `source_reader_action` / `source_reader_feedback`。
+- `scripts/kb.py raw <source>` 通过 `127.0.0.1:8765` 调本机 source-reader 服务，把读取结果落成 raw。
+- 服务未启动时到独立仓库执行：`cd ~/Documents/source-reader && python3 scripts/source_reader.py serve --host 127.0.0.1 --port 8765`。
+
+karpathy-kb 只负责"读到的资料是否值得长期保存"这一层判断。
+
 ## 目录
 
 ```text
 karpathy-kb/
   AGENTS.md                 # LLM 维护知识库的工作规则
+  CLAUDE.md                 # Claude Code 工作规则
   commands.md               # 读取/沉淀/发布等触发词
   README.md                 # 项目说明
   index.md                  # Obsidian 首页
@@ -22,16 +35,16 @@ karpathy-kb/
   profile.md                # 个人偏好和长期目标
   prompts/                  # LLM 工作提示词
   raw/                      # 原始资料、读取结果、摘要和建议
-  scripts/                  # 本地辅助脚本
+  scripts/                  # kb.py：raw 落地、list、review/publish 提示词
   wiki/                     # 经确认后沉淀的长期知识
-  source-reader/            # 独立的智能内容读取器设计
   templates/                # raw/wiki 模板
+  adapters/                 # Claude / Codex 适配文件镜像
 ```
 
 ## 最小工作流
 
 1. 用户说：`沉淀 <url 或文件>`
-2. LLM 调用 source-reader 读取内容。
+2. LLM 通过 MCP `source_reader_read` 读取内容（或直接调 `scripts/kb.py raw`）。
 3. LLM 创建 `raw/YYYY-MM-DD-短标题.md`，保存原文、元数据、摘要、建议和确认问题。
 4. LLM 向用户展示摘要、建议和可能的 wiki 更新方案。
 5. 用户说：`发布` 或明确确认。
@@ -39,133 +52,25 @@ karpathy-kb/
 
 ## 本地辅助脚本
 
-先提供两个很小的零依赖脚本：
+只剩一个：`scripts/kb.py`。
 
 ```bash
-python3 scripts/source_reader.py <source> --format md
-python3 scripts/source_reader.py <source> --format md --read-depth preview
-python3 scripts/source_reader.py <source> --format json --max-chars 16000
+python3 scripts/kb.py raw <source>                                # 走本机 source-reader 服务读 source，写 raw
+python3 scripts/kb.py raw <source> --mode auto --interactive-login --read-depth standard
+python3 scripts/kb.py raw <source> --max-chars 24000              # 控制写入 raw 的原文长度
+python3 scripts/kb.py list --status fetched                       # 查看 raw 队列
+python3 scripts/kb.py review <raw-file>                           # 生成 review 提示词
+python3 scripts/kb.py publish-prompt <raw-file>                   # 生成 publish 提示词
 ```
 
-`source_reader.py` 是独立的智能内容读取器，只负责把 source 读成 LLM 可用的结构化结果，并尽量节省 token：
+`kb.py` 只做机械动作：调服务、按模板落 raw、拼提示词。总结、建议、发布判断仍由 LLM 完成。
 
-- GitHub repo：默认只读取 README，不遍历整个项目。
-- GitHub blob：读取 raw 文件，不读取页面外壳。
-- GitHub issue/PR：读取正文和前 12 条评论，不拉完整时间线。
-- GitHub release：读取 release notes，不抓整个 releases 页面。
-- 视频：如果本机有 `yt-dlp`，优先读取字幕，不下载视频。
-- 普通网页：抽取 HTML 文本，并按 `--max-chars` 做头尾保留。
-- 本地文件：按文本读取，HTML 会抽正文。
-- 大文档：先用 `--read-depth preview` 输出快速预览和下一步动作，再由用户决定是否深读、总结或沉淀。
+## Source Reader 安装与维护
 
-它不负责判断资料是否值得进入个人知识库，也不直接维护 raw/wiki 生命周期。`summarize_for_kb`、`save_raw` 这类动作属于 karpathy-kb 适配层，核心 reader 只保证“尽可能读到、读准、低成本输出”。
+参见 `~/Documents/source-reader/README.md` 和 `~/Documents/source-reader/CLAUDE.md`。在那里完成：
 
-`kb.py` 用于把 source-reader 的结果生成 raw 草稿：
+- Node / Playwright 安装、profile 管理
+- MCP 注册到 Claude / Codex
+- 服务启动、status、doctor 等运维命令
 
-```bash
-python3 scripts/kb.py raw <source>
-python3 scripts/kb.py raw <source> --read-depth standard
-```
-
-这个脚本只负责机械读取和落 raw，不负责总结、建议和发布判断。可以用 `--max-chars` 控制写入 raw 的原文长度。
-
-常用命令：
-
-```bash
-python3 scripts/kb.py list --status fetched
-python3 scripts/kb.py review <raw-file>
-python3 scripts/kb.py publish-prompt <raw-file>
-```
-
-- `list`：查看当前 raw 队列。
-- `review`：把 profile、review 规则和 raw 拼成一段提示词，供 LLM 生成摘要、建议和待确认问题。
-- `publish-prompt`：用户确认发布后，生成发布提示词，指导 LLM 更新 wiki、index、log 和 raw 状态。
-
-## 安装到 Codex / Claude
-
-这个知识库可以作为可移植套件安装到任意 Obsidian vault。安装器会复制核心协议、模板、脚本和 `source-reader`，再按目标 Agent 写入适配文件。
-
-自动安装到 Obsidian vault：
-
-```bash
-python3 scripts/install.py --target both
-```
-
-如果有多个 Obsidian vault，可以按名称或路径指定：
-
-```bash
-python3 scripts/install.py --target both --vault-name "Obsidian Vault"
-```
-
-```bash
-python3 scripts/install.py --target both --vault /path/to/obsidian-vault
-```
-
-如果希望安装时一次性准备登录态/JS 页面读取能力、本地服务和 MCP 入口：
-
-```bash
-python3 scripts/install.py --target both --vault /path/to/obsidian-vault --install-runtime --install-mcp --start-service
-```
-
-自动检测 vault 时也可以直接准备运行时、MCP 元数据并启动本地 source-reader 服务：
-
-```bash
-python3 scripts/install.py --target both --install-runtime --install-mcp --start-service
-```
-
-`--install-runtime` 会执行 `npm install` 并安装 Playwright Chromium；`--install-mcp` 会在 `.source-reader/mcp/` 写入 source-reader MCP 模板和运行时元数据；`--start-service` 会启动本 vault 下的 `127.0.0.1:8765` 本地读取服务，日志写入 `.source-reader/source-reader.log`。后续 Agent 优先通过 MCP 或本地服务读取 URL，避免每次由 Agent 沙箱直接申请外网访问。
-
-如果确认要把 source-reader 注册进当前机器的 Codex / Claude 全局 MCP 配置，可以显式加：
-
-```bash
-python3 scripts/install.py --target both --install-runtime --install-mcp --register-mcp both --start-service
-```
-
-这会修改 `~/.codex/config.toml`，并通过 `claude mcp add --scope user` 注册 Claude Code。安装器会给 Codex 配置生成备份；已有 `source-reader` MCP 时默认跳过，确实需要替换时再加 `--force`。
-
-只安装某一侧：
-
-```bash
-python3 scripts/install.py --target codex --vault /path/to/obsidian-vault
-python3 scripts/install.py --target claude --vault /path/to/obsidian-vault
-```
-
-默认不会覆盖已有文件；需要覆盖模板时显式加 `--force`。
-
-Codex 适配会生成：
-
-```text
-.codex-plugin/plugin.json
-skills/karpathy-kb/SKILL.md
-AGENTS.md
-```
-
-Claude 适配会生成：
-
-```text
-CLAUDE.md
-.claude/commands/read.md
-.claude/commands/deposit.md
-.claude/commands/publish.md
-.claude/commands/update-kb.md
-```
-
-MCP 适配会生成：
-
-```text
-.source-reader/mcp/source-reader.codex.toml
-.source-reader/mcp/source-reader.claude.json
-.source-reader/mcp/source-reader.runtime.json
-```
-
-安装器默认不直接修改 Codex / Claude 的全局 MCP 配置。全局注册属于用户环境配置；确认后使用 `--register-mcp codex|claude|both`。
-
-两侧都复用同一套 `scripts/source_reader.py` 和 `scripts/kb.py`，因此读取网页、GitHub、PDF、视频字幕、JS 渲染页面和登录态页面的能力不会分叉。
-
-对登录态页面，Agent 应直接使用：
-
-```bash
-python3 scripts/source_reader.py remote-read <source> --read-depth preview --format md
-```
-
-它只连接本地 source-reader 服务；服务内部会先低成本读取，遇到登录墙或 JS 空壳时自动使用持久化浏览器 profile。用户只需要在首次登录或登录态失效时去浏览器完成授权，后续同域名页面会复用登录态。
+karpathy-kb 不再托管这些命令，避免和独立仓库分叉。

@@ -2,16 +2,16 @@
 """
 Small helper for the Obsidian knowledge base.
 
-This script is intentionally mechanical. It can create a raw draft from a
-local file or a simple URL, but the LLM still owns summary, advice, and wiki
+This script is intentionally mechanical. It creates a raw draft by calling the
+local source-reader HTTP service; the LLM still owns summary, advice, and wiki
 publication decisions.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
-import html.parser
 import json
 import pathlib
 import re
@@ -19,8 +19,9 @@ import sys
 import urllib.error
 import urllib.request
 
-from source_reader import DEFAULT_SERVICE_HOST, DEFAULT_SERVICE_PORT, classify_and_read, read_via_service
 
+DEFAULT_SERVICE_HOST = "127.0.0.1"
+DEFAULT_SERVICE_PORT = 8765
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "raw"
@@ -28,49 +29,37 @@ PROMPTS_DIR = ROOT / "prompts"
 PROFILE = ROOT / "profile.md"
 
 
-class TextExtractor(html.parser.HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self._skip = 0
-        self.parts: list[str] = []
-        self.title = ""
-        self._in_title = False
+@dataclasses.dataclass
+class ReaderOutput:
+    input_type: str = ""
+    source_type: str = ""
+    title: str = ""
+    url: str = ""
+    local_path: str = ""
+    author: str = ""
+    published_at: str = ""
+    reader: str = ""
+    read_quality: str = ""
+    strategy: str = ""
+    token_policy: str = ""
+    read_depth: str = ""
+    content: str = ""
+    preview: dict = dataclasses.field(default_factory=dict)
+    actions: list = dataclasses.field(default_factory=list)
+    next_actions: list = dataclasses.field(default_factory=list)
+    metadata: dict = dataclasses.field(default_factory=dict)
+    errors: list = dataclasses.field(default_factory=list)
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "noscript"}:
-            self._skip += 1
-        if tag == "title":
-            self._in_title = True
-        if tag in {"p", "br", "div", "section", "article", "li", "h1", "h2", "h3"}:
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "noscript"} and self._skip:
-            self._skip -= 1
-        if tag == "title":
-            self._in_title = False
-
-    def handle_data(self, data: str) -> None:
-        text = data.strip()
-        if not text:
-            return
-        if self._in_title:
-            self.title += text
-        if not self._skip:
-            self.parts.append(text)
-
-    def text(self) -> str:
-        raw = " ".join(self.parts)
-        raw = re.sub(r"[ \t]+", " ", raw)
-        raw = re.sub(r"\n\s+", "\n", raw)
-        raw = re.sub(r"\n{3,}", "\n\n", raw)
-        return raw.strip()
+    @classmethod
+    def from_dict(cls, data: dict) -> "ReaderOutput":
+        fields = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in fields})
 
 
 def slugify(value: str) -> str:
     value = value.strip().lower()
     value = re.sub(r"https?://", "", value)
-    value = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "-", value)
+    value = re.sub(r"[^a-z0-9一-鿿]+", "-", value)
     value = value.strip("-")
     return value[:48] or "untitled"
 
@@ -79,45 +68,68 @@ def json_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def read_url(url: str) -> tuple[str, str, str]:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 kb-source-reader/0.1",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            content_type = response.headers.get("content-type", "")
-            body = response.read()
-    except urllib.error.URLError as exc:
-        raise SystemExit(f"failed to read URL: {exc}") from exc
-
-    charset_match = re.search(r"charset=([\w-]+)", content_type)
-    charset = charset_match.group(1) if charset_match else "utf-8"
-    decoded = body.decode(charset, errors="replace")
-
-    if "html" in content_type or decoded.lstrip().startswith("<"):
-        extractor = TextExtractor()
-        extractor.feed(decoded)
-        title = extractor.title.strip() or url
-        return title, extractor.text(), "url"
-
-    return url, decoded.strip(), "url"
-
-
-def read_file(path_text: str) -> tuple[str, str, str]:
-    path = pathlib.Path(path_text).expanduser().resolve()
-    if not path.exists():
-        raise SystemExit(f"file does not exist: {path}")
-    if not path.is_file():
-        raise SystemExit(f"not a file: {path}")
-    text = path.read_text(encoding="utf-8", errors="replace")
-    return path.stem, text.strip(), "file"
-
-
 def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def service_url(host: str, port: int, path: str) -> str:
+    return f"http://{host}:{port}{path}"
+
+
+def post_json(url: str, payload: dict, timeout: int = 300) -> dict:
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            decoded = response.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as exc:
+        raise SystemExit(
+            f"source-reader service unreachable at {url}: {exc}.\n"
+            "Start it from the standalone repo, e.g.:\n"
+            "  cd ~/Documents/source-reader && python3 scripts/source_reader.py serve --host 127.0.0.1 --port 8765"
+        ) from exc
+    parsed = json.loads(decoded)
+    if not isinstance(parsed, dict):
+        raise SystemExit("source-reader service returned non-object json")
+    if parsed.get("ok") is False:
+        raise SystemExit(str(parsed.get("error") or "source-reader service failed"))
+    return parsed
+
+
+def read_via_service(
+    source: str,
+    host: str,
+    port: int,
+    max_chars: int,
+    mode: str,
+    read_depth: str,
+    browser_profile: str,
+    headless: bool,
+    interactive_login: bool,
+    login_timeout_ms: int,
+) -> ReaderOutput:
+    response = post_json(
+        service_url(host, port, "/read"),
+        {
+            "source": source,
+            "max_chars": max_chars,
+            "mode": mode,
+            "read_depth": read_depth,
+            "browser_profile": browser_profile,
+            "headless": headless,
+            "interactive_login": interactive_login,
+            "login_timeout_ms": login_timeout_ms,
+        },
+    )
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise SystemExit("source-reader service response missing result")
+    return ReaderOutput.from_dict(result)
 
 
 def resolve_raw(path_text: str | None = None) -> pathlib.Path:
@@ -214,34 +226,21 @@ def create_raw(
     headless: bool = False,
     interactive_login: bool = False,
     login_timeout_ms: int = 180000,
-    use_service: bool = False,
     service_host: str = DEFAULT_SERVICE_HOST,
     service_port: int = DEFAULT_SERVICE_PORT,
 ) -> pathlib.Path:
-    if use_service:
-        result = read_via_service(
-            source,
-            service_host,
-            service_port,
-            max_chars,
-            mode,
-            read_depth,
-            browser_profile or ".source-reader/profiles/default",
-            headless,
-            interactive_login,
-            login_timeout_ms,
-        )
-    else:
-        result = classify_and_read(
-            source,
-            max_chars=max_chars,
-            mode=mode,
-            browser_profile=browser_profile,
-            headless=headless,
-            interactive_login=interactive_login,
-            login_timeout_ms=login_timeout_ms,
-            read_depth=read_depth,
-        )
+    result = read_via_service(
+        source,
+        service_host,
+        service_port,
+        max_chars,
+        mode,
+        read_depth,
+        browser_profile or ".source-reader/profiles/default",
+        headless,
+        interactive_login,
+        login_timeout_ms,
+    )
     is_url = bool(result.url)
     final_title = title or result.title
     today = dt.date.today().isoformat()
@@ -341,7 +340,6 @@ def main(argv: list[str]) -> int:
     raw.add_argument("--headless", action="store_true", help="run browser mode headless")
     raw.add_argument("--interactive-login", action="store_true", help="wait for manual login when browser mode reaches an auth page")
     raw.add_argument("--login-timeout-ms", type=int, default=180000, help="manual login wait timeout in milliseconds")
-    raw.add_argument("--use-service", action="store_true", help="read through local source-reader service")
     raw.add_argument("--service-host", default=DEFAULT_SERVICE_HOST, help="source-reader service host")
     raw.add_argument("--service-port", type=int, default=DEFAULT_SERVICE_PORT, help="source-reader service port")
 
@@ -367,7 +365,6 @@ def main(argv: list[str]) -> int:
             headless=args.headless,
             interactive_login=args.interactive_login,
             login_timeout_ms=args.login_timeout_ms,
-            use_service=args.use_service,
             service_host=args.service_host,
             service_port=args.service_port,
         )

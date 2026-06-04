@@ -1,6 +1,6 @@
 ---
 name: karpathy-kb
-description: Maintain a personal Obsidian knowledge base using the Karpathy LLM-maintained wiki workflow. Use when the user says 读取, 沉淀, 发布, 更新, or asks to read sources with source-reader and decide whether they should become durable wiki knowledge.
+description: Maintain a personal Obsidian knowledge base using the Karpathy LLM-maintained wiki workflow. Use when the user says 读取, 沉淀, 发布, 更新, or asks to read sources and decide whether they should become durable wiki knowledge. Reader functionality is provided by the standalone source-reader MCP server.
 ---
 
 # Karpathy KB
@@ -14,25 +14,37 @@ You maintain the user's Obsidian knowledge base. The goal is not to save every s
 - `发布`: only after explicit confirmation, update wiki/index/log and mark the raw note as `published`.
 - A bare link is not enough to deposit. If intent is unclear, read for the current task only.
 
+## Source Reader
+
+Reading URLs / PDFs / video transcripts / login-gated pages is owned by the standalone `~/Documents/source-reader/` project, registered as MCP server `source-reader`. This repo no longer ships a reader implementation.
+
+Prefer the MCP tools:
+
+- `source_reader_read` — read a source.
+- `source_reader_action` — run follow-up actions (`login_with_browser`, `continue_deep_read`, `extract_outline`, `extract_code`, `mark_result_good`, `mark_result_bad`).
+- `source_reader_feedback` — record read-quality feedback.
+
+If the MCP server is unhealthy, diagnose from the standalone repo (`cd ~/Documents/source-reader && python3 scripts/source_reader.py status`). Do not fall back to Claude's built-in Fetch / WebFetch.
+
 ## Commands
 
 Run from the knowledge base root.
 
 ```bash
-python3 scripts/source_reader.py remote-read <source> --read-depth preview --format md
-python3 scripts/source_reader.py <source> --mode auto --browser-profile .source-reader/profiles/default --interactive-login --login-timeout-ms 180000 --read-depth preview --format md
-python3 scripts/kb.py raw <source> --read-depth standard
-python3 scripts/kb.py raw <source> --mode auto --browser-profile .source-reader/profiles/default --interactive-login --login-timeout-ms 180000 --read-depth standard
+python3 scripts/kb.py raw <source>                                 # via local source-reader service, write raw
+python3 scripts/kb.py raw <source> --mode auto --interactive-login --read-depth standard
+python3 scripts/kb.py list --status fetched
 python3 scripts/kb.py review <raw-file>
 python3 scripts/kb.py publish-prompt <raw-file>
-python3 scripts/install.py --target both --install-runtime --install-mcp --start-service
-python3 scripts/source_reader.py --doctor --format md
 ```
 
-Prefer the MCP tool when available. If MCP is not configured, use `remote-read`: it calls the local source-reader service on `127.0.0.1`, while the service owns external networking, Playwright, cache, and browser profiles. If the service is unavailable, start it with `python3 scripts/source_reader.py serve --host 127.0.0.1 --port 8765` or fall back to the direct auto-mode command.
+`kb.py raw` calls `127.0.0.1:8765` (the standalone source-reader service). If the service is down:
 
-Use auto mode for JS-rendered pages, login-gated pages, Yuque, Feishu, Notion, Knowledge Star, and similar sources. Reuse `.source-reader/profiles/default` for persistent login state. If Playwright is missing, run the installer command above once instead of asking the user which retry path to take.
-If browser reading still fails, run `source_reader.py --doctor` and follow explicit setup recommendations before asking the user.
+```bash
+cd ~/Documents/source-reader && python3 scripts/source_reader.py serve --host 127.0.0.1 --port 8765
+```
+
+For pure reading (no raw write), call MCP `source_reader_read` directly — don't invoke local scripts.
 
 After each read, inspect `actions` / `Next Operations` first. Treat them as the supported operation protocol. Prefer `scope=reader` actions for generic reading, and only use `scope=adapter` actions inside the karpathy-kb workflow:
 
@@ -50,11 +62,11 @@ After each read, inspect `actions` / `Next Operations` first. Treat them as the 
 - Do not create `wiki/sources/*.md` as a temporary summary.
 - Wiki notes are topic-oriented. Prefer updating existing wiki pages over creating duplicates.
 - Do not publish until the user explicitly confirms.
-- When reading large content, start with `--read-depth preview`, summarize what was found, and ask whether to deep-read, deposit raw, or answer a focused question.
+- When reading large content, start with `read_depth=preview` (MCP) or `--read-depth preview` (kb.py), summarize what was found, and ask whether to deep-read, deposit raw, or answer a focused question.
 
 ## Project Files
 
 - Read `AGENTS.md` for the full maintenance protocol.
 - Read `commands.md` for trigger behavior.
 - Read `profile.md` before giving advice or publishing.
-- Use `source-reader/README.md` when changing source-reader behavior.
+- For source-reader design / operations, see `~/Documents/source-reader/README.md` and `~/Documents/source-reader/CLAUDE.md`.

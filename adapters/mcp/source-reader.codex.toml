@@ -1,7 +1,0 @@
-# Project-local Codex MCP snippet for source-reader.
-# Copy this block into your Codex MCP config when you want global registration.
-
-[mcp_servers.source-reader]
-command = "python3"
-args = ["scripts/source_reader.py", "mcp"]
-cwd = "."
