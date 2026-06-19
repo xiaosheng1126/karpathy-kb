@@ -5,7 +5,7 @@
 ## 意图判断
 
 - `读取 <source>`：只读取并回答当前问题，不创建 raw，不更新 wiki。
-- `沉淀 <source>`：读取 source，创建 raw，在 raw 中加入自动摘要、建议和确认问题，但不更新 wiki。
+- `沉淀 <source>`：读取 source，创建 raw，**立即填充** Auto Summary / Suggestions / wiki_targets（不留占位符），但不更新 wiki。
 - `发布`：只有用户明确确认后，才基于 raw 更新或创建 wiki。
 - 用户只发链接时，不默认沉淀；如果上下文不明确，只按当前任务读取。
 
@@ -69,7 +69,7 @@ JS 渲染、登录态、语雀、飞书、Notion、知识星球等页面：在 M
 - wiki 是长期知识层，只保存用户确认后值得复用的内容。
 - wiki 按主题组织，不按来源建笔记。
 - 优先更新已有 wiki，避免重复主题。
-- 发布时通常更新 `wiki/*.md`、`index.md`、`log.md`，并把对应 raw 状态改为 `published`。
+- 发布时先扫描 `index.md`，找出所有相关已有 wiki 页面并联动更新（往回织），再写当前主题，最后更新 `index.md`、`log.md`，并把对应 raw 状态改为 `published`。
 
 ## 大内容处理
 

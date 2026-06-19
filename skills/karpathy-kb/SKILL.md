@@ -59,10 +59,12 @@ After each read, inspect `actions` / `Next Operations` first. Treat them as the 
 
 - Persist only `fetched` and `published`. Do not write `reviewed` or `approved` as file states.
 - Raw notes are the source workspace. Keep metadata, read quality, original content or traceable excerpts, auto summary, suggestions, wiki targets, and confirmation questions.
+- **After `kb.py raw` creates a raw file, immediately edit it to fill Auto Summary, Suggestions, and `wiki_targets` — never leave placeholders. Present the summary to the user only after the raw is complete.**
 - Do not create `wiki/sources/*.md` as a temporary summary.
 - Wiki notes are topic-oriented. Prefer updating existing wiki pages over creating duplicates.
 - Do not publish until the user explicitly confirms.
 - When reading large content, start with `read_depth=preview` (MCP) or `--read-depth preview` (kb.py), summarize what was found, and ask whether to deep-read, deposit raw, or answer a focused question.
+- When publishing, always perform "weave-back": scan `index.md`, identify all related existing wiki pages, and update them before writing the current topic. One new source may touch multiple existing pages.
 
 ## Project Files
 

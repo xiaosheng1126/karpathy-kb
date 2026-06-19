@@ -24,9 +24,42 @@ DEFAULT_SERVICE_HOST = "127.0.0.1"
 DEFAULT_SERVICE_PORT = 8765
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RAW_DIR = ROOT / "raw"
 PROMPTS_DIR = ROOT / "prompts"
 PROFILE = ROOT / "profile.md"
+
+_config_file = ROOT / "config.json"
+_config: dict = json.loads(_config_file.read_text(encoding="utf-8")) if _config_file.exists() else {}
+
+_OBSIDIAN_CANDIDATES = [
+    pathlib.Path("~/Documents/Obsidian Vault").expanduser(),
+    pathlib.Path("~/Documents/Obsidian").expanduser(),
+    pathlib.Path("~/Obsidian").expanduser(),
+]
+
+
+def _resolve_raw_dir() -> "pathlib.Path | None":
+    if "raw_dir" in _config:
+        return pathlib.Path(_config["raw_dir"]).expanduser()
+    for candidate in _OBSIDIAN_CANDIDATES:
+        if candidate.is_dir():
+            inbox = candidate / "00_Inbox"
+            return inbox if inbox.is_dir() else candidate
+    return None
+
+
+RAW_DIR = _resolve_raw_dir()
+
+_RAW_DIR_HINT = (
+    "未找到 Obsidian vault，raw_dir 未配置。\n"
+    "请在知识库根目录创建 config.json：\n"
+    '{\n  "raw_dir": "~/Documents/Obsidian Vault/00_Inbox"\n}'
+)
+
+
+def _require_raw_dir() -> pathlib.Path:
+    if RAW_DIR is None:
+        raise SystemExit(_RAW_DIR_HINT)
+    return RAW_DIR
 
 
 @dataclasses.dataclass
@@ -54,6 +87,13 @@ class ReaderOutput:
     def from_dict(cls, data: dict) -> "ReaderOutput":
         fields = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: v for k, v in data.items() if k in fields})
+
+
+def display_path(path: pathlib.Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 def slugify(value: str) -> str:
@@ -143,7 +183,7 @@ def resolve_raw(path_text: str | None = None) -> pathlib.Path:
             raise SystemExit(f"not a file: {candidate}")
         return candidate
 
-    raw_files = sorted(RAW_DIR.glob("*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
+    raw_files = sorted(_require_raw_dir().glob("*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
     raw_files = [path for path in raw_files if path.name != "README.md"]
     if not raw_files:
         raise SystemExit("no raw files found")
@@ -166,7 +206,7 @@ def frontmatter_value(text: str, key: str) -> str:
 
 def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     rows: list[tuple[pathlib.Path, str, str]] = []
-    for path in sorted(RAW_DIR.glob("*.md")):
+    for path in sorted(_require_raw_dir().glob("*.md")):
         if path.name == "README.md":
             continue
         text = read_text(path)
@@ -246,7 +286,7 @@ def create_raw(
     today = dt.date.today().isoformat()
     fetched_at = dt.datetime.now().isoformat(timespec="seconds")
     filename = f"{today}-{slugify(final_title)}.md"
-    target = RAW_DIR / filename
+    target = _require_raw_dir() / filename
 
     if target.exists():
         raise SystemExit(f"raw file already exists: {target}")
@@ -368,7 +408,7 @@ def main(argv: list[str]) -> int:
             service_host=args.service_host,
             service_port=args.service_port,
         )
-        print(target.relative_to(ROOT))
+        print(display_path(target))
         return 0
 
     if args.command == "list":
@@ -376,7 +416,7 @@ def main(argv: list[str]) -> int:
         if not rows:
             return 0
         for path, raw_status, title in rows:
-            print(f"{raw_status}\t{path.relative_to(ROOT)}\t{title}")
+            print(f"{raw_status}\t{display_path(path)}\t{title}")
         return 0
 
     if args.command == "review":

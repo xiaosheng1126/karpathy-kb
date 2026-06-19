@@ -5,7 +5,7 @@
 ## 意图判断
 
 - `读取 <source>`：只读取并回答当前问题，不创建 raw，不更新 wiki。
-- `沉淀 <source>`：读取 source，创建 raw，在 raw 中加入自动摘要、建议和确认问题，但不更新 wiki。
+- `沉淀 <source>`：读取 source，创建 raw，**立即填充** Auto Summary / Suggestions / wiki_targets（不留占位符），但不更新 wiki。
 - `发布`：只有用户明确确认后，才基于 raw 更新或创建 wiki。
 - 用户只发链接时，不默认沉淀；如果上下文不明确，只按当前任务读取。
 

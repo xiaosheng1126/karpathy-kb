@@ -21,4 +21,9 @@ cd ~/Documents/source-reader && python3 scripts/source_reader.py serve --host 12
 
 karpathy-kb 不再托管 reader 安装 / doctor 命令；reader 端的运维到独立仓库处理。
 
-创建 raw 后，读取该 raw，并在 raw 中补充自动摘要、结合 `profile.md` 的建议、可能的 wiki 目标和待确认问题。不要更新 wiki。最后询问用户是否发布。
+创建 raw 后，**立即编辑 raw 文件**，填充以下内容（不留占位符）：
+- `## Auto Summary`：核心观点、关键细节、事实/观点/推测区分、限制和不确定性。
+- `## Suggestions`：结合 `profile.md` 给出对用户的具体建议、是否值得沉淀、建议更新哪篇 wiki。
+- frontmatter `wiki_targets`：填入建议的目标 wiki 页面名称。
+
+不要更新 wiki。向用户展示摘要和建议，询问是否发布。
