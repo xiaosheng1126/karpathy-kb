@@ -69,5 +69,22 @@ class TestRawsInWindow(unittest.TestCase):
             self.assertEqual(len(results), 1)
 
 
+class TestFrontmatterListValue(unittest.TestCase):
+    def test_reads_wiki_targets(self):
+        text = "---\nwiki_targets: [代理工具, TUN模式]\nstatus: fetched\n---\n# Title"
+        result = kb.frontmatter_list_value(text, "wiki_targets")
+        self.assertEqual(result, ["代理工具", "TUN模式"])
+
+    def test_empty_list(self):
+        text = "---\nwiki_targets: []\nstatus: fetched\n---\n# Title"
+        result = kb.frontmatter_list_value(text, "wiki_targets")
+        self.assertEqual(result, [])
+
+    def test_missing_key_returns_empty(self):
+        text = "---\nstatus: fetched\n---\n# Title"
+        result = kb.frontmatter_list_value(text, "wiki_targets")
+        self.assertEqual(result, [])
+
+
 if __name__ == "__main__":
     unittest.main()

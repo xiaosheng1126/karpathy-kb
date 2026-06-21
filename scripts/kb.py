@@ -247,6 +247,16 @@ def frontmatter_value(text: str, key: str) -> str:
     return ""
 
 
+def frontmatter_list_value(text: str, key: str) -> list[str]:
+    raw = frontmatter_value(text, key)
+    if not raw or not raw.startswith("["):
+        return []
+    inner = raw[1:-1].strip() if raw.endswith("]") else ""
+    if not inner:
+        return []
+    return [v.strip().strip('"').strip("'") for v in inner.split(",") if v.strip()]
+
+
 def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     rows: list[tuple[pathlib.Path, str, str]] = []
     for path in sorted(_require_raw_dir().glob("*.md")):
