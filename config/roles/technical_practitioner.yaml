@@ -1,0 +1,6 @@
+role_id: technical_practitioner
+display_name: 技术从业者
+focus_areas: [Android, HarmonyOS, Flutter, AI Coding, Engineering Tools, Personal Productivity]
+time_window_days: 7
+output_template: templates/weekly_technical.md
+cold_start_threshold: 5

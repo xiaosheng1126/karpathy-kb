@@ -33,8 +33,10 @@ karpathy-kb/
   index.md                  # Obsidian 首页
   log.md                    # 发布日志
   profile.md                # 个人偏好和长期目标
+  docs/                     # 产品、架构和流程规范
   prompts/                  # LLM 工作提示词
   raw/                      # 原始资料、读取结果、摘要和建议
+  reviews/                  # 周期性输出，第一版为技术者周报
   scripts/                  # kb.py：raw 落地、list、review/publish 提示词
   wiki/                     # 经确认后沉淀的长期知识
   templates/                # raw/wiki 模板
