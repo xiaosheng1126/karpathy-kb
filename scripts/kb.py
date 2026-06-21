@@ -96,6 +96,49 @@ def display_path(path: pathlib.Path) -> str:
         return str(path)
 
 
+def _parse_simple_yaml(text: str) -> dict:
+    """Minimal YAML parser for flat key: value structures (no external deps)."""
+    result: dict = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if value.startswith("[") and value.endswith("]"):
+            inner = value[1:-1].strip()
+            result[key] = [v.strip().strip('"').strip("'") for v in inner.split(",") if v.strip()] if inner else []
+        elif value.lstrip("-").isdigit():
+            result[key] = int(value)
+        else:
+            result[key] = value
+    return result
+
+
+def _raws_in_window(
+    raw_dir: pathlib.Path, cutoff: dt.date
+) -> list[tuple[pathlib.Path, str, dt.date]]:
+    """Return raw files whose saved_at (or fetched_at fallback) >= cutoff."""
+    results: list[tuple[pathlib.Path, str, dt.date]] = []
+    for path in sorted(raw_dir.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        text = read_text(path)
+        date_str = frontmatter_value(text, "saved_at") or frontmatter_value(text, "fetched_at")
+        if not date_str:
+            continue
+        try:
+            saved_date = dt.date.fromisoformat(date_str[:10])
+        except ValueError:
+            continue
+        if saved_date >= cutoff:
+            results.append((path, text, saved_date))
+    return results
+
+
 def slugify(value: str) -> str:
     value = value.strip().lower()
     value = re.sub(r"https?://", "", value)
@@ -256,9 +299,87 @@ def build_publish_prompt(raw_path: pathlib.Path) -> str:
 """
 
 
+def load_role_profile(role_id: str) -> dict:
+    config_path = ROOT / "config" / "roles" / f"{role_id}.yaml"
+    if not config_path.exists():
+        raise SystemExit(f"role profile not found: {config_path}")
+    return _parse_simple_yaml(config_path.read_text(encoding="utf-8"))
+
+
+def build_weekly_prompt(role_id: str = "technical_practitioner") -> str:
+    profile = load_role_profile(role_id)
+    time_window = int(profile.get("time_window_days", 7))
+    threshold = int(profile.get("cold_start_threshold", 5))
+    focus_areas = profile.get("focus_areas", [])
+    if isinstance(focus_areas, str):
+        focus_areas = [focus_areas]
+
+    today = dt.date.today()
+    cutoff = today - dt.timedelta(days=time_window)
+    week_label = today.strftime("%Y-W%W")
+
+    raw_dir = _require_raw_dir()
+    raws = _raws_in_window(raw_dir, cutoff)
+
+    cold_start_warning = ""
+    if len(raws) < threshold:
+        cold_start_warning = (
+            f"\n> ⚠ 本周输入偏少（{len(raws)} 条，建议 {threshold}+ 条），"
+            "以下判断仅供参考，建议补充更多资料后重新生成。\n"
+        )
+
+    raws_section = ""
+    for path, text, saved_date in sorted(raws, key=lambda x: x[2]):
+        raws_section += f"\n---\n### {path.name} (saved: {saved_date})\n\n{text}\n"
+
+    wiki_dir = ROOT / "wiki"
+    wiki_section = ""
+    if wiki_dir.exists():
+        for path in sorted(wiki_dir.glob("*.md")):
+            if path.name == "README.md":
+                continue
+            wiki_section += f"\n---\n### wiki/{path.name}\n\n{read_text(path)}\n"
+
+    weekly_instructions = ""
+    instructions_path = ROOT / "prompts" / "weekly.md"
+    if instructions_path.exists():
+        weekly_instructions = read_text(instructions_path)
+
+    focus_str = "、".join(focus_areas) if focus_areas else "技术领域"
+
+    return f"""# 生成 {week_label} 技术者周报
+
+{cold_start_warning}
+## 用户 Profile
+
+{read_text(PROFILE)}
+
+## 角色关注领域
+
+{focus_str}
+
+## 周报生成指令
+
+{weekly_instructions}
+
+## 本周 Raw 资料（{cutoff} 至 {today}，共 {len(raws)} 条）
+
+{raws_section if raws_section else "（本周无 raw 资料）"}
+
+## Wiki 长期知识上下文
+
+{wiki_section if wiki_section else "（暂无 wiki 内容）"}
+
+## 输出目标
+
+请生成 `reviews/{week_label}.md` 的内容。直接输出 Markdown 正文，不需要额外说明。
+"""
+
+
 def create_raw(
     source: str,
     title: str | None = None,
+    saved_at: str | None = None,
     max_chars: int = 24000,
     mode: str = "fast",
     read_depth: str = "standard",
@@ -285,6 +406,7 @@ def create_raw(
     final_title = title or result.title
     today = dt.date.today().isoformat()
     fetched_at = dt.datetime.now().isoformat(timespec="seconds")
+    saved_at_value = saved_at or dt.date.today().isoformat()
     filename = f"{today}-{slugify(final_title)}.md"
     target = _require_raw_dir() / filename
 
@@ -307,6 +429,7 @@ def create_raw(
     }
 
     body = f"""---
+schema_version: "1"
 status: fetched
 source_id: {today}-{slugify(final_title)}
 input_type: {result.input_type}
@@ -316,10 +439,17 @@ url: {url}
 local_path: {local_path}
 author: {result.author}
 published_at: {result.published_at}
+saved_at: {saved_at_value}
 fetched_at: {fetched_at}
 reader: {result.reader}
 read_quality: {result.read_quality}
 wiki_targets: []
+summary:
+key_points: []
+confidence: medium
+valid_until:
+deprecated_reason:
+related_raws: []
 ---
 
 # {final_title}
@@ -349,11 +479,11 @@ wiki_targets: []
 
 {preview}
 
-## Auto Summary
+## Auto Summary（LLM Fixed — 不重新生成）
 
 待 LLM 总结。
 
-## Suggestions
+## Suggestions（LLM Refreshable — 可重新生成）
 
 待 LLM 结合 profile.md 给出建议。
 
@@ -382,6 +512,12 @@ def main(argv: list[str]) -> int:
     raw.add_argument("--login-timeout-ms", type=int, default=180000, help="manual login wait timeout in milliseconds")
     raw.add_argument("--service-host", default=DEFAULT_SERVICE_HOST, help="source-reader service host")
     raw.add_argument("--service-port", type=int, default=DEFAULT_SERVICE_PORT, help="source-reader service port")
+    raw.add_argument(
+        "--saved-at",
+        dest="saved_at",
+        default=None,
+        help="override saved_at date (ISO8601, e.g. 2026-06-01) for backfilling historical raws",
+    )
 
     list_cmd = sub.add_parser("list", help="list raw notes")
     list_cmd.add_argument("--status", help="filter by raw status, for example fetched")
@@ -392,13 +528,17 @@ def main(argv: list[str]) -> int:
     publish = sub.add_parser("publish-prompt", help="print a publish prompt for a raw note")
     publish.add_argument("raw_file", nargs="?", help="raw note path; defaults to latest raw")
 
+    weekly = sub.add_parser("weekly", help="generate weekly report prompt")
+    weekly.add_argument("--role", default="technical_practitioner", help="role profile id")
+
     args = parser.parse_args(argv)
 
     if args.command == "raw":
         target = create_raw(
             args.source,
             args.title,
-            args.max_chars,
+            saved_at=args.saved_at,
+            max_chars=args.max_chars,
             mode=args.mode,
             read_depth=args.read_depth,
             browser_profile=args.browser_profile,
@@ -427,6 +567,10 @@ def main(argv: list[str]) -> int:
     if args.command == "publish-prompt":
         raw_path = resolve_raw(args.raw_file)
         print(build_publish_prompt(raw_path))
+        return 0
+
+    if args.command == "weekly":
+        print(build_weekly_prompt(args.role))
         return 0
 
     parser.error("unknown command")
