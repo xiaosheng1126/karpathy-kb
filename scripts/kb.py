@@ -257,6 +257,37 @@ def frontmatter_list_value(text: str, key: str) -> list[str]:
     return [v.strip().strip('"').strip("'") for v in inner.split(",") if v.strip()]
 
 
+def find_matching_wikis(
+    targets: list[str],
+    wiki_dir: pathlib.Path,
+) -> tuple[list[tuple[str, pathlib.Path, str]], list[str]]:
+    wiki_titles: list[tuple[pathlib.Path, str]] = []
+    if wiki_dir.exists():
+        for path in sorted(wiki_dir.glob("*.md")):
+            if path.name == "README.md":
+                continue
+            text = read_text(path)
+            for line in text.splitlines():
+                if line.startswith("# "):
+                    wiki_titles.append((path, line[2:].strip()))
+                    break
+
+    matched: list[tuple[str, pathlib.Path, str]] = []
+    unmatched: list[str] = []
+    for target in targets:
+        hits = [
+            (target, p, title)
+            for p, title in wiki_titles
+            if target.lower() in title.lower()
+        ]
+        if hits:
+            matched.extend(hits)
+        else:
+            unmatched.append(target)
+
+    return matched, unmatched
+
+
 def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     rows: list[tuple[pathlib.Path, str, str]] = []
     for path in sorted(_require_raw_dir().glob("*.md")):

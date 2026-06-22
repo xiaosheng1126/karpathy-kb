@@ -86,5 +86,57 @@ class TestFrontmatterListValue(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TestFindMatchingWikis(unittest.TestCase):
+    def test_matched(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "proxy.md").write_text(
+                "# 代理工具 TUN 模式下国内网站断网问题\n\n内容",
+                encoding="utf-8",
+            )
+            matched, unmatched = kb.find_matching_wikis(["代理工具"], wiki_dir)
+            self.assertEqual(len(matched), 1)
+            self.assertEqual(matched[0][0], "代理工具")
+            self.assertIn("代理工具", matched[0][2])
+            self.assertEqual(unmatched, [])
+
+    def test_matched_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "flutter.md").write_text(
+                "# Flutter 状态管理对比\n\n内容",
+                encoding="utf-8",
+            )
+            matched, unmatched = kb.find_matching_wikis(["flutter"], wiki_dir)
+            self.assertEqual(len(matched), 1)
+            self.assertEqual(unmatched, [])
+
+    def test_unmatched(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "proxy.md").write_text(
+                "# 代理工具 TUN 模式\n\n内容",
+                encoding="utf-8",
+            )
+            matched, unmatched = kb.find_matching_wikis(["Flutter"], wiki_dir)
+            self.assertEqual(matched, [])
+            self.assertEqual(unmatched, ["Flutter"])
+
+    def test_empty_targets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            matched, unmatched = kb.find_matching_wikis([], wiki_dir)
+            self.assertEqual(matched, [])
+            self.assertEqual(unmatched, [])
+
+    def test_skips_readme(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "README.md").write_text("# README\n\n内容", encoding="utf-8")
+            matched, unmatched = kb.find_matching_wikis(["README"], wiki_dir)
+            self.assertEqual(matched, [])
+            self.assertEqual(unmatched, ["README"])
+
+
 if __name__ == "__main__":
     unittest.main()
