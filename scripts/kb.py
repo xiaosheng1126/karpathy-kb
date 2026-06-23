@@ -474,6 +474,39 @@ def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     return rows
 
 
+def deprecate_raw(text: str, reason: str, today: dt.date) -> str:
+    if re.search(r"^deprecated_reason:", text, re.MULTILINE):
+        return re.sub(
+            r"^(deprecated_reason:).*$",
+            f"deprecated_reason: {reason}",
+            text,
+            flags=re.MULTILINE,
+        )
+    parts = text.split("---", 2)
+    if len(parts) == 3:
+        parts[1] = parts[1].rstrip("\n") + f"\ndeprecated_reason: {reason}\n"
+        return "---".join(parts)
+    return text
+
+
+def deprecate_wiki_judgment(
+    text: str, judgment_substr: str, reason: str, today: dt.date
+) -> str:
+    month_str = today.strftime("%Y-%m")
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if not (line.startswith("**判断**：") or line.startswith("**判断**:")):
+            continue
+        stmt = re.split("[：:]", line, maxsplit=1)[-1].strip()
+        if "~~" in stmt:
+            continue
+        if judgment_substr.lower() not in stmt.lower():
+            continue
+        lines[i] = f"**判断**：~~{stmt}~~（已过时：{month_str}，{reason}）"
+        return "\n".join(lines)
+    raise ValueError(f"no active judgment matching '{judgment_substr}' found")
+
+
 def build_review_prompt(raw_path: pathlib.Path) -> str:
     return f"""# Review This Raw Note
 
@@ -782,6 +815,11 @@ def main(argv: list[str]) -> int:
     weekly.add_argument("--role", default="technical_practitioner", help="role profile id")
     weekly.add_argument("--output", action="store_true", help="save prompt to reviews/YYYY-WW-prompt.md")
 
+    deprecate_cmd = sub.add_parser("deprecate", help="mark a raw or wiki judgment as deprecated")
+    deprecate_cmd.add_argument("file", help="path to raw or wiki file (relative to repo root or absolute)")
+    deprecate_cmd.add_argument("--reason", default="", help="deprecation reason text")
+    deprecate_cmd.add_argument("--judgment", default="", help="substring of wiki judgment statement to deprecate")
+
     aging_cmd = sub.add_parser("aging", help="scan for expired or soon-to-expire entries")
     aging_cmd.add_argument(
         "--threshold",
@@ -841,6 +879,25 @@ def main(argv: list[str]) -> int:
             out_path = ROOT / "reviews" / f"{week_label}-prompt.md"
             out_path.write_text(prompt, encoding="utf-8")
             print(f"\n保存至 {display_path(out_path)}", file=sys.stderr)
+        return 0
+
+    if args.command == "deprecate":
+        path = pathlib.Path(args.file)
+        if not path.is_absolute():
+            path = ROOT / path
+        if not path.exists():
+            raise SystemExit(f"file not found: {args.file}")
+        text = read_text(path)
+        today = dt.date.today()
+        if args.judgment:
+            try:
+                updated = deprecate_wiki_judgment(text, args.judgment, args.reason, today)
+            except ValueError as e:
+                raise SystemExit(str(e))
+        else:
+            updated = deprecate_raw(text, args.reason, today)
+        path.write_text(updated, encoding="utf-8")
+        print(f"已标记为 deprecated：{display_path(path)}")
         return 0
 
     if args.command == "aging":

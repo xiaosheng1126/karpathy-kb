@@ -469,5 +469,53 @@ class TestAgingCountsByPath(unittest.TestCase):
         self.assertEqual(result[p], (2, 0))
 
 
+class TestDeprecateRaw(unittest.TestCase):
+    def test_sets_deprecated_reason_on_existing_field(self):
+        text = "---\ntitle: Test\ndeprecated_reason: \nstatus: fetched\n---\n# Test\n"
+        result = kb.deprecate_raw(text, "竞品已取代", dt.date(2026, 6, 23))
+        self.assertIn("deprecated_reason: 竞品已取代", result)
+
+    def test_adds_deprecated_reason_if_field_missing(self):
+        text = "---\ntitle: Test\nstatus: fetched\n---\n# Test\n"
+        result = kb.deprecate_raw(text, "过时", dt.date(2026, 6, 23))
+        self.assertIn("deprecated_reason: 过时", result)
+
+    def test_preserves_other_fields(self):
+        text = "---\ntitle: Test\nstatus: fetched\ndeprecated_reason: \n---\n# Test\n"
+        result = kb.deprecate_raw(text, "reason", dt.date(2026, 6, 23))
+        self.assertIn("title: Test", result)
+        self.assertIn("status: fetched", result)
+
+    def test_replaces_non_empty_deprecated_reason(self):
+        text = "---\ntitle: T\ndeprecated_reason: old reason\n---\n# T\n"
+        result = kb.deprecate_raw(text, "new reason", dt.date(2026, 6, 23))
+        self.assertIn("deprecated_reason: new reason", result)
+        self.assertNotIn("old reason", result)
+
+
+class TestDeprecateWikiJudgment(unittest.TestCase):
+    def test_adds_strikethrough_to_matching_judgment(self):
+        text = "# Wiki\n\n**判断**：X 工具值得跟踪\n- 有效期：2026-12\n"
+        result = kb.deprecate_wiki_judgment(text, "X 工具", "竞品取代", dt.date(2026, 6, 23))
+        self.assertIn("~~X 工具值得跟踪~~", result)
+        self.assertIn("已过时：2026-06", result)
+        self.assertIn("竞品取代", result)
+
+    def test_case_insensitive_match(self):
+        text = "# Wiki\n\n**判断**：Flutter 方案可行\n"
+        result = kb.deprecate_wiki_judgment(text, "flutter", "新方案出现", dt.date(2026, 6, 23))
+        self.assertIn("~~Flutter 方案可行~~", result)
+
+    def test_no_match_raises_value_error(self):
+        text = "# Wiki\n\n**判断**：Y 工具\n"
+        with self.assertRaises(ValueError):
+            kb.deprecate_wiki_judgment(text, "X 工具", "reason", dt.date(2026, 6, 23))
+
+    def test_already_deprecated_not_matched(self):
+        text = "# Wiki\n\n**判断**：~~X 工具~~（已过时）\n"
+        with self.assertRaises(ValueError):
+            kb.deprecate_wiki_judgment(text, "X 工具", "reason", dt.date(2026, 6, 23))
+
+
 if __name__ == "__main__":
     unittest.main()
