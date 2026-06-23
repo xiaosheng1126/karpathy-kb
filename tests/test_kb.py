@@ -517,5 +517,34 @@ class TestDeprecateWikiJudgment(unittest.TestCase):
             kb.deprecate_wiki_judgment(text, "X 工具", "reason", dt.date(2026, 6, 23))
 
 
+class TestAddWikiSource(unittest.TestCase):
+    def test_adds_to_empty_sources_list(self):
+        text = "---\nstatus: published\nsources: []\n---\n# Wiki\n"
+        result = kb.add_wiki_source(text, "raw-2026.md")
+        self.assertIn("sources: [raw-2026.md]", result)
+
+    def test_appends_to_existing_sources(self):
+        text = "---\nstatus: published\nsources: [first.md]\n---\n# Wiki\n"
+        result = kb.add_wiki_source(text, "second.md")
+        self.assertIn("sources: [first.md, second.md]", result)
+
+    def test_skips_duplicate(self):
+        text = "---\nstatus: published\nsources: [raw.md]\n---\n# Wiki\n"
+        result = kb.add_wiki_source(text, "raw.md")
+        self.assertEqual(result.count("raw.md"), 1)
+
+    def test_inserts_field_when_missing_from_frontmatter(self):
+        text = "---\nstatus: published\n---\n# Wiki\n"
+        result = kb.add_wiki_source(text, "raw.md")
+        self.assertIn("sources: [raw.md]", result)
+        self.assertIn("status: published", result)
+
+    def test_adds_frontmatter_when_none_exists(self):
+        text = "# Wiki\n\nsome content\n"
+        result = kb.add_wiki_source(text, "raw.md")
+        self.assertIn("sources: [raw.md]", result)
+        self.assertIn("# Wiki", result)
+
+
 if __name__ == "__main__":
     unittest.main()

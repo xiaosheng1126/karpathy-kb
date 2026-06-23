@@ -474,6 +474,30 @@ def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     return rows
 
 
+def add_wiki_source(wiki_text: str, raw_filename: str) -> str:
+    def _update_sources(m: re.Match) -> str:
+        inner = m.group(1).strip()
+        items = [v.strip() for v in inner.split(",") if v.strip()] if inner else []
+        if raw_filename not in items:
+            items.append(raw_filename)
+        return f"sources: [{', '.join(items)}]"
+
+    updated, n = re.subn(r"^sources:\s*\[([^\]]*)\]", _update_sources, wiki_text, flags=re.MULTILINE)
+    if n:
+        return updated
+
+    updated, n = re.subn(r"^sources:.*$", f"sources: [{raw_filename}]", wiki_text, flags=re.MULTILINE)
+    if n:
+        return updated
+
+    parts = wiki_text.split("---", 2)
+    if len(parts) == 3:
+        parts[1] = parts[1].rstrip("\n") + f"\nsources: [{raw_filename}]\n"
+        return "---".join(parts)
+
+    return f"---\nsources: [{raw_filename}]\n---\n{wiki_text}"
+
+
 def deprecate_raw(text: str, reason: str, today: dt.date) -> str:
     if re.search(r"^deprecated_reason:", text, re.MULTILINE):
         return re.sub(
@@ -557,6 +581,8 @@ def build_publish_prompt(raw_path: pathlib.Path) -> str:
             lines.append("")
             for t in unmatched:
                 lines.append(f"- {t}")
+        lines.append("")
+        lines.append(f"发布后请将 `{raw_path.name}` 加入上述 wiki 的 `sources:` frontmatter 字段。")
         weave_back_block = "\n".join(lines)
 
     return f"""# Publish This Raw Note
