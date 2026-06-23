@@ -425,13 +425,13 @@ cold_start_threshold: 3
 
 - [x] 自动 aging 检测：`kb.py aging` 扫描 raw `valid_until` 和 wiki 判断有效期，支持 `--threshold`、`--output`
 - [x] 周报中展示"即将过期的判断"模块：`build_aging_block()` 已集成进 `_build_weekly_prompt_from_root()`
-- [ ] aging → deprecated 交互确认流：`kb.py aging --confirm`（见 v5）
+- [x] aging → deprecated 交互确认流：`kb.py aging --confirm`，通过 `_interactive_confirm_loop()` 逐条提示，`batch_deprecate_raws()` / `batch_deprecate_wiki_judgments()` 执行写入
 
 ### v5 目标：闭环与扩展
 
-- [ ] `kb.py aging --confirm`：过期条目一键交互确认并写入 deprecated 标注
-- [ ] 新增 `product_builder` 角色 Profile + 周报模板
-- [ ] `kb.py list --aging`：list 命令集成 aging 状态列
+- [x] `kb.py aging --confirm`：过期条目一键交互确认并写入 deprecated 标注（已在 v4 实现）
+- [ ] 新增 `product_builder` 角色 Profile + 周报模板——参见"角色扩展协议"章节示例，仅需新增 2 个文件
+- [x] `kb.py list --aging`：`--aging` flag 输出额外 aging 状态列（`active` / `aging` / `expired` / `-`），复用 `raw_aging_status()` 实现，方便快速扫描知识库健康度
 
 ---
 
