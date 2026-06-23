@@ -147,6 +147,13 @@ def slugify(value: str) -> str:
     return value[:48] or "untitled"
 
 
+def slugify_topic(topic: str) -> str:
+    """Convert a wiki topic name to a filename slug."""
+    value = topic.strip().lower()
+    value = re.sub(r"[^a-z0-9一-鿿]+", "-", value)
+    return value.strip("-")[:48] or "untitled"
+
+
 def json_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
@@ -531,6 +538,67 @@ def deprecate_wiki_judgment(
     raise ValueError(f"no active judgment matching '{judgment_substr}' found")
 
 
+def find_raws_for_topic(
+    topic: str,
+    raw_dir: pathlib.Path,
+) -> list[tuple[pathlib.Path, str, str]]:
+    results: list[tuple[pathlib.Path, str, str]] = []
+    for path in sorted(raw_dir.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        text = read_text(path)
+        targets = frontmatter_list_value(text, "wiki_targets")
+        if not any(topic.lower() in t.lower() for t in targets):
+            continue
+        summary = frontmatter_value(text, "summary")
+        key_points_raw = frontmatter_value(text, "key_points")
+        results.append((path, summary, key_points_raw))
+    return results
+
+
+def build_compile_prompt(
+    topic: str,
+    raw_entries: list[tuple[pathlib.Path, str, str]],
+    existing_wiki_path: "pathlib.Path | None",
+) -> str:
+    existing_wiki_section = ""
+    if existing_wiki_path and existing_wiki_path.exists():
+        existing_wiki_section = f"""
+## 已有 Wiki（请在此基础上更新）
+
+{read_text(existing_wiki_path)}
+"""
+    else:
+        existing_wiki_section = "\n## 已有 Wiki\n\n尚无对应 wiki，请新建。\n"
+
+    raws_section = ""
+    for path, summary, key_points in raw_entries:
+        raws_section += f"\n### {path.name}\n\n**摘要**：{summary}\n\n**关键点**：{key_points}\n"
+
+    slug = slugify_topic(topic)
+
+    return f"""# Compile Wiki: {topic}
+
+请基于以下 raw 资料，编译或更新主题 wiki《{topic}》。
+{existing_wiki_section}
+## 参考 Raw 资料（共 {len(raw_entries)} 条）
+
+{raws_section if raws_section else "（无匹配 raw）"}
+## 编译指令
+
+- 保留已有 wiki 中仍然有效的判断
+- 整合新 raw 带来的新观点、新事实
+- 每条判断注明置信度、有效期和来源 raw
+- 不确定的内容标注不确定性，不要伪装成事实
+- 输出完整的 wiki 文件内容（含 frontmatter）
+
+## 输出目标
+
+请将编译结果写入 `wiki/{slug}.md`（如果文件已存在则更新）。
+写入后请将涉及的 raw 文件名加入该 wiki 的 `sources:` frontmatter 字段。
+"""
+
+
 def build_review_prompt(raw_path: pathlib.Path) -> str:
     return f"""# Review This Raw Note
 
@@ -846,6 +914,15 @@ def main(argv: list[str]) -> int:
     deprecate_cmd.add_argument("--reason", default="", help="deprecation reason text")
     deprecate_cmd.add_argument("--judgment", default="", help="substring of wiki judgment statement to deprecate")
 
+    compile_cmd = sub.add_parser("compile", help="compile a wiki topic from matching raws")
+    compile_cmd.add_argument("topic", help="wiki topic name (used to match wiki_targets in raws)")
+    compile_cmd.add_argument("--wiki", default="", help="path to existing wiki file to update (optional)")
+    compile_cmd.add_argument(
+        "--output",
+        action="store_true",
+        help="save prompt to reviews/<topic>-compile-YYYY-MM-DD.md",
+    )
+
     aging_cmd = sub.add_parser("aging", help="scan for expired or soon-to-expire entries")
     aging_cmd.add_argument(
         "--threshold",
@@ -924,6 +1001,23 @@ def main(argv: list[str]) -> int:
             updated = deprecate_raw(text, args.reason, today)
         path.write_text(updated, encoding="utf-8")
         print(f"已标记为 deprecated：{display_path(path)}")
+        return 0
+
+    if args.command == "compile":
+        raw_dir = _require_raw_dir()
+        raw_entries = find_raws_for_topic(args.topic, raw_dir)
+        existing_wiki_path = None
+        if args.wiki:
+            p = pathlib.Path(args.wiki)
+            existing_wiki_path = p if p.is_absolute() else ROOT / p
+        prompt = build_compile_prompt(args.topic, raw_entries, existing_wiki_path)
+        print(prompt)
+        if args.output:
+            today = dt.date.today()
+            slug = slugify_topic(args.topic)
+            out_path = ROOT / "reviews" / f"{slug}-compile-{today}.md"
+            out_path.write_text(prompt, encoding="utf-8")
+            print(f"\n保存至 {display_path(out_path)}", file=sys.stderr)
         return 0
 
     if args.command == "aging":

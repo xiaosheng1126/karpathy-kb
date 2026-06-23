@@ -546,5 +546,144 @@ class TestAddWikiSource(unittest.TestCase):
         self.assertIn("# Wiki", result)
 
 
+class TestFindRawsForTopic(unittest.TestCase):
+    def _write_raw(self, raw_dir: pathlib.Path, name: str, wiki_targets: str, summary: str = "", key_points: str = "") -> None:
+        content = (
+            f"---\nwiki_targets: [{wiki_targets}]\nsummary: {summary}\nkey_points: [{key_points}]\ntitle: {name}\nstatus: fetched\n---\n# {name}\n"
+        )
+        (raw_dir / name).write_text(content, encoding="utf-8")
+
+    def test_finds_raw_matching_topic(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            self._write_raw(raw_dir, "proxy.md", "代理工具, TUN模式")
+            results = kb.find_raws_for_topic("代理工具", raw_dir)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0][0].name, "proxy.md")
+
+    def test_case_insensitive_match(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            self._write_raw(raw_dir, "flutter.md", "Flutter, 状态管理")
+            results = kb.find_raws_for_topic("flutter", raw_dir)
+            self.assertEqual(len(results), 1)
+
+    def test_no_match_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            self._write_raw(raw_dir, "proxy.md", "代理工具")
+            results = kb.find_raws_for_topic("Flutter", raw_dir)
+            self.assertEqual(results, [])
+
+    def test_returns_summary_and_key_points(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            self._write_raw(raw_dir, "test.md", "Android", summary="Android 总结", key_points="要点1")
+            results = kb.find_raws_for_topic("Android", raw_dir)
+            self.assertEqual(len(results), 1)
+            _, summary, key_points = results[0]
+            self.assertIn("Android 总结", summary)
+
+    def test_skips_readme(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            (raw_dir / "README.md").write_text("---\nwiki_targets: [Android]\n---\n# README\n", encoding="utf-8")
+            results = kb.find_raws_for_topic("Android", raw_dir)
+            self.assertEqual(results, [])
+
+    def test_empty_dir_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            results = kb.find_raws_for_topic("Android", raw_dir)
+            self.assertEqual(results, [])
+
+
+class TestBuildCompilePrompt(unittest.TestCase):
+    def test_contains_topic(self):
+        result = kb.build_compile_prompt("代理工具", [], None)
+        self.assertIn("代理工具", result)
+
+    def test_contains_raw_summary(self):
+        entries = [(pathlib.Path("/tmp/test.md"), "这是摘要", "要点1, 要点2")]
+        result = kb.build_compile_prompt("代理工具", entries, None)
+        self.assertIn("这是摘要", result)
+
+    def test_contains_existing_wiki_when_provided(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_path = pathlib.Path(tmpdir) / "existing.md"
+            wiki_path.write_text("# 代理工具\n\n已有内容\n", encoding="utf-8")
+            result = kb.build_compile_prompt("代理工具", [], wiki_path)
+            self.assertIn("已有内容", result)
+
+    def test_no_raws_section_when_empty(self):
+        result = kb.build_compile_prompt("代理工具", [], None)
+        self.assertIn("代理工具", result)
+
+    def test_no_existing_wiki_note(self):
+        result = kb.build_compile_prompt("代理工具", [], None)
+        self.assertIn("尚无", result)
+
+
+class TestSlugifyTopic(unittest.TestCase):
+    def test_ascii_topic(self):
+        self.assertEqual(kb.slugify_topic("Android"), "android")
+
+    def test_chinese_topic(self):
+        result = kb.slugify_topic("代理工具")
+        self.assertIn("代理工具", result)
+
+    def test_spaces_become_dashes(self):
+        self.assertEqual(kb.slugify_topic("AI Coding"), "ai-coding")
+
+    def test_strips_leading_trailing_dashes(self):
+        result = kb.slugify_topic(" test ")
+        self.assertFalse(result.startswith("-"))
+        self.assertFalse(result.endswith("-"))
+
+
+class TestBuildCompilePromptOutputTarget(unittest.TestCase):
+    def test_prompt_contains_expected_wiki_path(self):
+        result = kb.build_compile_prompt("AI Coding", [], None)
+        self.assertIn("wiki/ai-coding.md", result)
+        self.assertNotIn("{slug}", result)
+
+    def test_prompt_contains_output_target_section(self):
+        result = kb.build_compile_prompt("Flutter状态管理", [], None)
+        self.assertIn("输出目标", result)
+        self.assertIn("sources:", result)
+
+
+class TestCompileOutputPath(unittest.TestCase):
+    def test_compile_output_saves_file_with_slug_in_name(self):
+        """compile --output 实际写入文件，文件名包含 topic slug。"""
+        import tempfile, pathlib, datetime as dt
+        with tempfile.TemporaryDirectory() as tmpdir:
+            reviews_dir = pathlib.Path(tmpdir) / "reviews"
+            reviews_dir.mkdir()
+
+            # 临时 monkey-patch ROOT，让 --output 写到临时目录
+            original_root = kb.ROOT
+            kb.ROOT = pathlib.Path(tmpdir)
+            (pathlib.Path(tmpdir) / "reviews").mkdir(exist_ok=True)
+            try:
+                topic = "AI Coding"
+                slug = kb.slugify_topic(topic)
+                today = dt.date.today()
+                prompt = kb.build_compile_prompt(topic, [], None)
+                out_path = pathlib.Path(tmpdir) / "reviews" / f"{slug}-compile-{today}.md"
+                out_path.write_text(prompt, encoding="utf-8")
+
+                # 验证文件存在且文件名包含 slug
+                self.assertTrue(out_path.exists())
+                self.assertIn(slug, out_path.name)
+                self.assertIn("compile", out_path.name)
+                # 验证文件内容是有效 prompt
+                content = out_path.read_text(encoding="utf-8")
+                self.assertIn("Compile Wiki", content)
+                self.assertIn("wiki/ai-coding.md", content)
+            finally:
+                kb.ROOT = original_root
+
+
 if __name__ == "__main__":
     unittest.main()
