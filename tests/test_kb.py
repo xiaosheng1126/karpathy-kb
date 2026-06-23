@@ -777,6 +777,43 @@ class TestBuildWeeklyPromptTemplate(unittest.TestCase):
             # fallback 路径包含完整标题格式，模板路径没有
             self.assertIn("技术者周报", result)
 
+    def test_uses_role_specific_instructions_file(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            (root / "profile.md").write_text("# Profile\n用户偏好", encoding="utf-8")
+            prompts = root / "prompts"
+            prompts.mkdir()
+            (prompts / "weekly.md").write_text("技术周报指令", encoding="utf-8")
+            (prompts / "weekly_product.md").write_text("产品周报指令", encoding="utf-8")
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            (root / "wiki").mkdir()
+            template_dir = root / "templates"
+            template_dir.mkdir()
+            (template_dir / "weekly_product.md").write_text(
+                "%%WEEKLY_INSTRUCTIONS%%",
+                encoding="utf-8",
+            )
+            config_roles = root / "config" / "roles"
+            config_roles.mkdir(parents=True)
+            (config_roles / "product_builder.yaml").write_text(
+                "role_id: product_builder\n"
+                "focus_areas: [产品]\n"
+                "time_window_days: 7\n"
+                "output_template: templates/weekly_product.md\n"
+                "instructions_file: prompts/weekly_product.md\n"
+                "cold_start_threshold: 3\n",
+                encoding="utf-8",
+            )
+            result = kb._build_weekly_prompt_from_root(
+                root=root,
+                raw_dir=raw_dir,
+                role_id="product_builder",
+            )
+            self.assertIn("产品周报指令", result)
+            self.assertNotIn("技术周报指令", result)
+
 
 class TestBatchDeprecateRaws(unittest.TestCase):
     def _write_raw(self, raw_dir: pathlib.Path, name: str, valid_until: str, title: str = "Test") -> None:
@@ -1218,6 +1255,97 @@ class TestListWiki(unittest.TestCase):
                  unittest.mock.patch("sys.stdout", buf):
                 result = kb.main(["list", "--wiki"])
             self.assertEqual(result, 0)
+
+
+class TestDoctor(unittest.TestCase):
+    def _setup_root(self, tmp_path):
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        (tmp_path / "index.md").write_text("", encoding="utf-8")
+        (tmp_path / "log.md").write_text("# Log\n", encoding="utf-8")
+        roles_dir = tmp_path / "config" / "roles"
+        roles_dir.mkdir(parents=True)
+        templates_dir = tmp_path / "templates"
+        templates_dir.mkdir()
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (templates_dir / "weekly_technical.md").write_text("template", encoding="utf-8")
+        (prompts_dir / "weekly.md").write_text("instructions", encoding="utf-8")
+        (roles_dir / "technical_practitioner.yaml").write_text(
+            "role_id: technical_practitioner\n"
+            "output_template: templates/weekly_technical.md\n"
+            "instructions_file: prompts/weekly.md\n",
+            encoding="utf-8",
+        )
+        return raw_dir, wiki_dir
+
+    def _wiki_text(self, title="Topic"):
+        return (
+            "---\n"
+            "schema_version: \"1\"\n"
+            "status: published\n"
+            "sources: []\n"
+            "---\n"
+            f"# {title}\n"
+        )
+
+    def test_doctor_ok_for_consistent_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir, wiki_dir = self._setup_root(root)
+            (raw_dir / "raw.md").write_text("---\nstatus: fetched\n---\n# Raw\n", encoding="utf-8")
+            (wiki_dir / "topic.md").write_text(self._wiki_text("Topic"), encoding="utf-8")
+            (root / "index.md").write_text(
+                "<!-- 格式：[[wiki/文件名]] — 摘要 -->\n[[wiki/topic]] — Topic\n",
+                encoding="utf-8",
+            )
+            (root / "log.md").write_text("# Log\n\n- 发布 `wiki/topic.md`\n", encoding="utf-8")
+            issues = kb.run_doctor(root, raw_dir)
+            self.assertEqual(issues, [])
+
+    def test_doctor_reports_invalid_raw_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir, _ = self._setup_root(root)
+            (raw_dir / "draft.md").write_text("---\nstatus: draft\n---\n# Raw\n", encoding="utf-8")
+            issues = kb.run_doctor(root, raw_dir)
+            self.assertTrue(any(issue.code == "raw_status" for issue in issues))
+
+    def test_doctor_reports_unindexed_wiki(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir, wiki_dir = self._setup_root(root)
+            (wiki_dir / "topic.md").write_text(self._wiki_text("Topic"), encoding="utf-8")
+            (root / "index.md").write_text("# Index\n", encoding="utf-8")
+            issues = kb.run_doctor(root, raw_dir)
+            self.assertTrue(any(issue.code == "wiki_not_indexed" for issue in issues))
+
+    def test_doctor_reports_missing_role_instructions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir, _ = self._setup_root(root)
+            (root / "config" / "roles" / "technical_practitioner.yaml").write_text(
+                "role_id: technical_practitioner\n"
+                "output_template: templates/weekly_technical.md\n"
+                "instructions_file: prompts/missing.md\n",
+                encoding="utf-8",
+            )
+            issues = kb.run_doctor(root, raw_dir)
+            self.assertTrue(any(issue.code == "role_instructions_missing" for issue in issues))
+
+    def test_doctor_reports_unlogged_wiki(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir, wiki_dir = self._setup_root(root)
+            (wiki_dir / "topic.md").write_text(self._wiki_text("Topic"), encoding="utf-8")
+            (root / "index.md").write_text("[[wiki/topic]] — Topic\n", encoding="utf-8")
+            issues = kb.run_doctor(root, raw_dir)
+            self.assertTrue(any(issue.code == "wiki_not_logged" for issue in issues))
+
+    def test_build_doctor_report_ok(self):
+        self.assertIn("Doctor OK", kb.build_doctor_report([]))
 
 
 if __name__ == "__main__":

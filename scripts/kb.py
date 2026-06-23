@@ -535,6 +535,123 @@ def list_wiki(wiki_dir: pathlib.Path) -> list[tuple[pathlib.Path, str, int]]:
     return rows
 
 
+@dataclasses.dataclass
+class DoctorIssue:
+    level: str
+    code: str
+    path: pathlib.Path | None
+    message: str
+
+
+def _frontmatter_block(text: str) -> str:
+    if not text.startswith("---"):
+        return ""
+    end = text.find("\n---", 3)
+    if end == -1:
+        return ""
+    return text[3:end]
+
+
+def _index_wiki_links(index_text: str) -> set[str]:
+    links: set[str] = set()
+    for line in index_text.splitlines():
+        if line.strip().startswith("<!--"):
+            continue
+        links.update(re.findall(r"\[\[wiki/([^\]]+)\]\]", line))
+    return links
+
+
+def run_doctor(root: pathlib.Path, raw_dir: pathlib.Path) -> list[DoctorIssue]:
+    issues: list[DoctorIssue] = []
+    allowed_raw_status = {"fetched", "published"}
+
+    if not raw_dir.exists():
+        issues.append(DoctorIssue("ERROR", "raw_dir_missing", raw_dir, "raw_dir 不存在"))
+    else:
+        for path in sorted(raw_dir.glob("*.md")):
+            if path.name == "README.md":
+                continue
+            text = read_text(path)
+            status = frontmatter_value(text, "status")
+            if status not in allowed_raw_status:
+                issues.append(
+                    DoctorIssue(
+                        "ERROR",
+                        "raw_status",
+                        path,
+                        f"raw status 应为 fetched/published，当前为 {status or 'missing'}",
+                    )
+                )
+
+    index_path = root / "index.md"
+    index_text = read_text(index_path) if index_path.exists() else ""
+    if not index_text:
+        issues.append(DoctorIssue("ERROR", "index_missing", index_path, "index.md 不存在或为空"))
+    index_links = _index_wiki_links(index_text)
+    log_path = root / "log.md"
+    log_text = read_text(log_path) if log_path.exists() else ""
+    if not log_text:
+        issues.append(DoctorIssue("ERROR", "log_missing", log_path, "log.md 不存在或为空"))
+
+    wiki_dir = root / "wiki"
+    wiki_files: set[str] = set()
+    if not wiki_dir.exists():
+        issues.append(DoctorIssue("ERROR", "wiki_dir_missing", wiki_dir, "wiki 目录不存在"))
+    else:
+        for path in sorted(wiki_dir.glob("*.md")):
+            if path.name == "README.md":
+                continue
+            wiki_files.add(path.name)
+            text = read_text(path)
+            if not _frontmatter_block(text):
+                issues.append(DoctorIssue("ERROR", "wiki_frontmatter", path, "wiki 缺少 frontmatter"))
+                continue
+            if frontmatter_value(text, "status") != "published":
+                issues.append(DoctorIssue("ERROR", "wiki_status", path, "wiki status 应为 published"))
+            if frontmatter_value(text, "sources") == "":
+                issues.append(DoctorIssue("WARN", "wiki_sources", path, "wiki 缺少 sources 字段"))
+            if path.name not in index_links and path.stem not in index_links:
+                issues.append(DoctorIssue("ERROR", "wiki_not_indexed", path, "wiki 未登记到 index.md"))
+            if log_text and path.name not in log_text:
+                issues.append(DoctorIssue("WARN", "wiki_not_logged", path, "wiki 未出现在 log.md 发布记录中"))
+
+    for linked in sorted(index_links):
+        linked_name = linked if linked.endswith(".md") else f"{linked}.md"
+        if linked_name not in wiki_files:
+            issues.append(
+                DoctorIssue("ERROR", "index_stale_link", wiki_dir / linked_name, "index.md 指向不存在的 wiki")
+            )
+
+    roles_dir = root / "config" / "roles"
+    if roles_dir.exists():
+        for role_path in sorted(roles_dir.glob("*.yaml")):
+            role = _parse_simple_yaml(role_path.read_text(encoding="utf-8"))
+            template_rel = str(role.get("output_template", "")).strip()
+            if not template_rel:
+                issues.append(DoctorIssue("ERROR", "role_template", role_path, "Role Profile 缺少 output_template"))
+            elif not (root / template_rel).exists():
+                issues.append(DoctorIssue("ERROR", "role_template_missing", root / template_rel, "output_template 文件不存在"))
+            instructions_rel = str(role.get("instructions_file", "prompts/weekly.md")).strip()
+            if not instructions_rel:
+                issues.append(DoctorIssue("ERROR", "role_instructions", role_path, "Role Profile instructions_file 为空"))
+            elif not (root / instructions_rel).exists():
+                issues.append(DoctorIssue("ERROR", "role_instructions_missing", root / instructions_rel, "instructions_file 文件不存在"))
+    else:
+        issues.append(DoctorIssue("ERROR", "roles_dir_missing", roles_dir, "config/roles 目录不存在"))
+
+    return issues
+
+
+def build_doctor_report(issues: list[DoctorIssue]) -> str:
+    if not issues:
+        return "Doctor OK: raw/wiki/index/role 配置未发现问题。"
+    lines = ["Doctor found issues:", ""]
+    for issue in issues:
+        path = f" `{display_path(issue.path)}`" if issue.path else ""
+        lines.append(f"- [{issue.level}] {issue.code}{path}: {issue.message}")
+    return "\n".join(lines)
+
+
 def add_wiki_source(wiki_text: str, raw_filename: str) -> str:
     def _update_sources(m: re.Match) -> str:
         inner = m.group(1).strip()
@@ -919,7 +1036,8 @@ def _build_weekly_prompt_from_root(
         wiki_section = "（暂无 wiki 内容）"
 
     weekly_instructions = ""
-    instructions_path = prompts_dir / "weekly.md"
+    instructions_rel = str(profile.get("instructions_file", "prompts/weekly.md")).strip() or "prompts/weekly.md"
+    instructions_path = root / instructions_rel
     if instructions_path.exists():
         weekly_instructions = read_text(instructions_path)
 
@@ -1213,6 +1331,8 @@ def main(argv: list[str]) -> int:
         help="interactively confirm and mark expired entries as deprecated",
     )
 
+    sub.add_parser("doctor", help="check raw/wiki/index/log/role configuration consistency")
+
     args = parser.parse_args(argv)
 
     if args.command == "raw":
@@ -1333,6 +1453,11 @@ def main(argv: list[str]) -> int:
         if args.confirm:
             _interactive_confirm_loop(raw_entries, wiki_entries, today)
         return 0
+
+    if args.command == "doctor":
+        issues = run_doctor(ROOT, _require_raw_dir())
+        print(build_doctor_report(issues))
+        return 1 if any(issue.level == "ERROR" for issue in issues) else 0
 
     parser.error("unknown command")
     return 2

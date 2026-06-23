@@ -35,7 +35,7 @@ karpathy-kb/
   profile.md                # 个人偏好和长期目标
   docs/                     # 产品、架构和流程规范
   prompts/                  # LLM 工作提示词
-  raw/                      # 原始资料、读取结果、摘要和建议
+  raw/                      # 仓库内 raw 说明；实际 raw 默认写入 Obsidian Vault/00_Inbox
   reviews/                  # 周期性输出，第一版为技术者周报
   scripts/                  # kb.py：raw 落地、list、review/publish 提示词
   wiki/                     # 经确认后沉淀的长期知识
@@ -47,7 +47,7 @@ karpathy-kb/
 
 1. 用户说：`沉淀 <url 或文件>`
 2. LLM 通过 MCP `source_reader_read` 读取内容（或直接调 `scripts/kb.py raw`）。
-3. LLM 创建 `raw/YYYY-MM-DD-短标题.md`，保存原文、元数据、摘要、建议和确认问题。
+3. LLM 创建 `raw_dir/YYYY-MM-DD-短标题.md`，保存原文、元数据、摘要、建议和确认问题。`raw_dir` 默认解析到 Obsidian Vault 的 `00_Inbox`，也可通过 `config.json` 显式配置。
 4. LLM 向用户展示摘要、建议和可能的 wiki 更新方案。
 5. 用户说：`发布` 或明确确认。
 6. LLM 更新 `wiki/`、`index.md`、`log.md`，并把 raw 状态改为 `published`。
@@ -61,8 +61,11 @@ python3 scripts/kb.py raw <source>                                # 走本机 so
 python3 scripts/kb.py raw <source> --mode auto --interactive-login --read-depth standard
 python3 scripts/kb.py raw <source> --max-chars 24000              # 控制写入 raw 的原文长度
 python3 scripts/kb.py list --status fetched                       # 查看 raw 队列
+python3 scripts/kb.py list --aging                                # 查看 raw 老化状态
+python3 scripts/kb.py list --wiki                                 # 查看 wiki 主题
 python3 scripts/kb.py review <raw-file>                           # 生成 review 提示词
 python3 scripts/kb.py publish-prompt <raw-file>                   # 生成 publish 提示词
+python3 scripts/kb.py doctor                                      # 检查 raw/wiki/角色配置闭环
 ```
 
 `kb.py` 只做机械动作：调服务、按模板落 raw、拼提示词。总结、建议、发布判断仍由 LLM 完成。

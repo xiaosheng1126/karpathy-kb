@@ -3,4 +3,5 @@ display_name: 产品思考者
 focus_areas: [产品设计, 用户需求, 竞品分析, AI 产品, 商业模式]
 time_window_days: 7
 output_template: templates/weekly_product.md
+instructions_file: prompts/weekly_product.md
 cold_start_threshold: 3
