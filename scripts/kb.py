@@ -566,6 +566,76 @@ def batch_deprecate_wiki_judgments(
     return count
 
 
+def _interactive_confirm_loop(
+    raw_entries: list["AgingEntry"],
+    wiki_entries: list["AgingEntry"],
+    today: dt.date,
+) -> tuple[int, int]:
+    """Interactively prompt user to deprecate expired entries.
+
+    Only prompts for status == 'expired'; aging (not-yet-expired) entries are
+    shown in the preceding report but skipped here.
+    Returns (raw_deprecated_count, wiki_deprecated_count).
+    """
+    expired_raw = [e for e in raw_entries if e.status == "expired"]
+    expired_wiki = [e for e in wiki_entries if e.status == "expired"]
+
+    if not expired_raw and not expired_wiki:
+        print("无已过期条目，无需确认。")
+        return 0, 0
+
+    confirmed_raw: list[tuple[AgingEntry, str]] = []
+    confirmed_wiki: list[tuple[AgingEntry, str]] = []
+
+    print("\n=== 已过期条目确认 ===")
+    print("（输入原因并回车 = 标记 deprecated，直接回车 = 跳过，q = 退出）\n")
+
+    aborted = False
+    for e in expired_raw:
+        if aborted:
+            break
+        print(f"[Raw] {display_path(e.file)}")
+        print(f"  标题: {e.label}  |  已过期 {-e.days_diff} 天（有效期至 {e.valid_until}）")
+        try:
+            reason = input("  deprecation 原因: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已中断。")
+            aborted = True
+            break
+        if reason.lower() == "q":
+            print("已退出确认流程。")
+            aborted = True
+            break
+        if reason:
+            confirmed_raw.append((e, reason))
+
+    for e in expired_wiki:
+        if aborted:
+            break
+        print(f"[Wiki 判断] {display_path(e.file)}")
+        print(f"  判断: {e.label}  |  已过期 {-e.days_diff} 天（有效期至 {e.valid_until}）")
+        try:
+            reason = input("  deprecation 原因: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已中断。")
+            break
+        if reason.lower() == "q":
+            print("已退出确认流程。")
+            break
+        if reason:
+            confirmed_wiki.append((e, reason))
+
+    raw_count = batch_deprecate_raws(confirmed_raw, today)
+    wiki_count = batch_deprecate_wiki_judgments(confirmed_wiki, today)
+
+    if raw_count + wiki_count > 0:
+        print(f"\n已完成：{raw_count} 条 raw、{wiki_count} 条 wiki 判断标记为 deprecated。")
+    else:
+        print("\n未标记任何条目。")
+
+    return raw_count, wiki_count
+
+
 def find_raws_for_topic(
     topic: str,
     raw_dir: pathlib.Path,
@@ -1016,6 +1086,11 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="save report to reviews/aging-YYYY-MM-DD.md",
     )
+    aging_cmd.add_argument(
+        "--confirm",
+        action="store_true",
+        help="interactively confirm and mark expired entries as deprecated",
+    )
 
     args = parser.parse_args(argv)
 
@@ -1118,6 +1193,8 @@ def main(argv: list[str]) -> int:
                 entry = format_aging_log_entry(today, raw_entries, wiki_entries, out_path)
                 with log_path.open("a", encoding="utf-8") as f:
                     f.write(entry)
+        if args.confirm:
+            _interactive_confirm_loop(raw_entries, wiki_entries, today)
         return 0
 
     parser.error("unknown command")
