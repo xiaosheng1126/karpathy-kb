@@ -288,6 +288,126 @@ def find_matching_wikis(
     return matched, unmatched
 
 
+def _parse_valid_until(date_str: str) -> "dt.date | None":
+    if not date_str:
+        return None
+    try:
+        if len(date_str) == 7:
+            return dt.date.fromisoformat(date_str + "-01")
+        return dt.date.fromisoformat(date_str[:10])
+    except ValueError:
+        return None
+
+
+@dataclasses.dataclass
+class AgingEntry:
+    file: pathlib.Path
+    kind: str          # "raw" | "wiki_judgment"
+    label: str         # title for raw, judgment statement for wiki
+    valid_until: dt.date
+    status: str        # "expired" | "aging"
+    days_diff: int     # negative = days past expiry, positive = days until expiry
+
+
+def scan_aging_raws(
+    raw_dir: pathlib.Path,
+    today: dt.date,
+    aging_threshold_days: int = 30,
+) -> list[AgingEntry]:
+    entries: list[AgingEntry] = []
+    for path in sorted(raw_dir.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        text = read_text(path)
+        valid_until = _parse_valid_until(frontmatter_value(text, "valid_until"))
+        if valid_until is None:
+            continue
+        days_diff = (valid_until - today).days
+        if days_diff < 0:
+            status = "expired"
+        elif days_diff <= aging_threshold_days:
+            status = "aging"
+        else:
+            continue
+        label = frontmatter_value(text, "title") or path.stem
+        entries.append(AgingEntry(path, "raw", label, valid_until, status, days_diff))
+    return entries
+
+
+def scan_aging_wikis(
+    wiki_dir: pathlib.Path,
+    today: dt.date,
+    aging_threshold_days: int = 30,
+) -> list[AgingEntry]:
+    entries: list[AgingEntry] = []
+    if not wiki_dir.exists():
+        return entries
+    for path in sorted(wiki_dir.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        text = read_text(path)
+        current_judgment: str | None = None
+        for line in text.splitlines():
+            if line.startswith("**判断**：") or line.startswith("**判断**:"):
+                stmt = re.split("[：:]", line, maxsplit=1)[-1].strip()
+                if "~~" in stmt:
+                    current_judgment = None
+                    continue
+                current_judgment = re.sub(r"~~(.+?)~~", r"\1", stmt).rstrip("。.")
+            m = re.match(r"\s*[-*]\s*有效期[：:]\s*(\d{4}-\d{2}(?:-\d{2})?)", line)
+            if m and current_judgment is not None:
+                valid_until = _parse_valid_until(m.group(1))
+                if valid_until is None:
+                    current_judgment = None
+                    continue
+                days_diff = (valid_until - today).days
+                if days_diff < 0:
+                    status = "expired"
+                elif days_diff <= aging_threshold_days:
+                    status = "aging"
+                else:
+                    current_judgment = None
+                    continue
+                entries.append(AgingEntry(path, "wiki_judgment", current_judgment, valid_until, status, days_diff))
+                current_judgment = None
+    return entries
+
+
+def build_aging_report(
+    raw_entries: list[AgingEntry],
+    wiki_entries: list[AgingEntry],
+    today: dt.date,
+) -> str:
+    def days_label(e: AgingEntry) -> str:
+        if e.status == "expired":
+            return f"已过期 {-e.days_diff} 天"
+        return f"还剩 {e.days_diff} 天"
+
+    lines: list[str] = [f"# Aging Report ({today})", ""]
+
+    lines.append("## Raw 条目")
+    lines.append("")
+    if raw_entries:
+        for e in raw_entries:
+            tag = "EXPIRED" if e.status == "expired" else "AGING  "
+            lines.append(f"- [{tag}] `{display_path(e.file)}` — {e.label}（有效期: {e.valid_until}, {days_label(e)}）")
+    else:
+        lines.append("无到期或即将到期条目。")
+    lines.append("")
+
+    lines.append("## Wiki 判断")
+    lines.append("")
+    if wiki_entries:
+        for e in wiki_entries:
+            tag = "EXPIRED" if e.status == "expired" else "AGING  "
+            lines.append(f"- [{tag}] `{display_path(e.file)}` — {e.label}（有效期: {e.valid_until}, {days_label(e)}）")
+    else:
+        lines.append("无到期或即将到期判断。")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     rows: list[tuple[pathlib.Path, str, str]] = []
     for path in sorted(_require_raw_dir().glob("*.md")):
@@ -593,6 +713,19 @@ def main(argv: list[str]) -> int:
     weekly = sub.add_parser("weekly", help="generate weekly report prompt")
     weekly.add_argument("--role", default="technical_practitioner", help="role profile id")
 
+    aging_cmd = sub.add_parser("aging", help="scan for expired or soon-to-expire entries")
+    aging_cmd.add_argument(
+        "--threshold",
+        type=int,
+        default=30,
+        help="days before expiry to flag as aging (default: 30)",
+    )
+    aging_cmd.add_argument(
+        "--output",
+        action="store_true",
+        help="save report to reviews/aging-YYYY-MM-DD.md",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "raw":
@@ -633,6 +766,20 @@ def main(argv: list[str]) -> int:
 
     if args.command == "weekly":
         print(build_weekly_prompt(args.role))
+        return 0
+
+    if args.command == "aging":
+        today = dt.date.today()
+        raw_dir = _require_raw_dir()
+        wiki_dir = ROOT / "wiki"
+        raw_entries = scan_aging_raws(raw_dir, today, args.threshold)
+        wiki_entries = scan_aging_wikis(wiki_dir, today, args.threshold)
+        report = build_aging_report(raw_entries, wiki_entries, today)
+        print(report)
+        if args.output:
+            out_path = ROOT / "reviews" / f"aging-{today}.md"
+            out_path.write_text(report, encoding="utf-8")
+            print(f"\n保存至 {display_path(out_path)}", file=sys.stderr)
         return 0
 
     parser.error("unknown command")

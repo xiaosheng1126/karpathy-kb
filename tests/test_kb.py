@@ -155,5 +155,214 @@ class TestFindMatchingWikis(unittest.TestCase):
             self.assertEqual(unmatched, [])
 
 
+class TestScanAgingRaws(unittest.TestCase):
+    def _write_raw(self, raw_dir: pathlib.Path, name: str, valid_until: str, title: str = "Test") -> None:
+        (raw_dir / name).write_text(
+            f"---\nvalid_until: {valid_until}\ntitle: {title}\nstatus: fetched\n---\n# {title}\n",
+            encoding="utf-8",
+        )
+
+    def test_expired_entry_returned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            self._write_raw(raw_dir, "old.md", "2020-01-01", "Old Thing")
+            today = dt.date(2026, 6, 23)
+            results = kb.scan_aging_raws(raw_dir, today)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].status, "expired")
+            self.assertEqual(results[0].label, "Old Thing")
+            self.assertLess(results[0].days_diff, 0)
+
+    def test_aging_entry_returned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            future = dt.date(2026, 6, 23) + dt.timedelta(days=10)
+            self._write_raw(raw_dir, "soon.md", future.isoformat(), "Soon Thing")
+            today = dt.date(2026, 6, 23)
+            results = kb.scan_aging_raws(raw_dir, today, aging_threshold_days=30)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].status, "aging")
+            self.assertEqual(results[0].days_diff, 10)
+
+    def test_ok_entry_not_returned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            future = dt.date(2026, 6, 23) + dt.timedelta(days=60)
+            self._write_raw(raw_dir, "fine.md", future.isoformat(), "Fine Thing")
+            today = dt.date(2026, 6, 23)
+            results = kb.scan_aging_raws(raw_dir, today, aging_threshold_days=30)
+            self.assertEqual(results, [])
+
+    def test_missing_valid_until_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            (raw_dir / "no_date.md").write_text(
+                "---\ntitle: No Date\nstatus: fetched\n---\n# No Date\n",
+                encoding="utf-8",
+            )
+            results = kb.scan_aging_raws(raw_dir, dt.date(2026, 6, 23))
+            self.assertEqual(results, [])
+
+    def test_readme_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            (raw_dir / "README.md").write_text(
+                "---\nvalid_until: 2020-01-01\ntitle: README\n---\n# README\n",
+                encoding="utf-8",
+            )
+            results = kb.scan_aging_raws(raw_dir, dt.date(2026, 6, 23))
+            self.assertEqual(results, [])
+
+    def test_year_month_format_parsed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            self._write_raw(raw_dir, "ym.md", "2020-01", "Year Month")
+            results = kb.scan_aging_raws(raw_dir, dt.date(2026, 6, 23))
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].status, "expired")
+
+
+class TestScanAgingWikis(unittest.TestCase):
+    def _write_wiki(self, wiki_dir: pathlib.Path, name: str, content: str) -> None:
+        (wiki_dir / name).write_text(content, encoding="utf-8")
+
+    def _judgment_block(self, statement: str, valid_until: str, deprecated: bool = False) -> str:
+        stmt = f"~~{statement}~~" if deprecated else statement
+        return (
+            f"**判断**：{stmt}\n"
+            f"- 置信度：medium\n"
+            f"- 有效期：{valid_until}\n"
+            f"- 来源：raw/test.md\n"
+        )
+
+    def test_expired_judgment_returned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            content = "# Test Wiki\n\n" + self._judgment_block("X 工具值得跟踪", "2020-01")
+            self._write_wiki(wiki_dir, "test.md", content)
+            results = kb.scan_aging_wikis(wiki_dir, dt.date(2026, 6, 23))
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].status, "expired")
+            self.assertEqual(results[0].label, "X 工具值得跟踪")
+            self.assertLess(results[0].days_diff, 0)
+
+    def test_aging_judgment_returned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            future = dt.date(2026, 6, 23) + dt.timedelta(days=10)
+            valid_until = future.strftime("%Y-%m")
+            content = "# Test Wiki\n\n" + self._judgment_block("Y 工具稳定", valid_until)
+            self._write_wiki(wiki_dir, "test.md", content)
+            results = kb.scan_aging_wikis(wiki_dir, dt.date(2026, 6, 23), aging_threshold_days=30)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].status, "aging")
+
+    def test_ok_judgment_not_returned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            content = "# Test Wiki\n\n" + self._judgment_block("Z 工具好用", "2028-01")
+            self._write_wiki(wiki_dir, "test.md", content)
+            results = kb.scan_aging_wikis(wiki_dir, dt.date(2026, 6, 23), aging_threshold_days=30)
+            self.assertEqual(results, [])
+
+    def test_deprecated_judgment_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            content = "# Test Wiki\n\n" + self._judgment_block("旧工具", "2020-01", deprecated=True)
+            self._write_wiki(wiki_dir, "test.md", content)
+            results = kb.scan_aging_wikis(wiki_dir, dt.date(2026, 6, 23))
+            self.assertEqual(results, [])
+
+    def test_judgment_without_valid_until_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            content = "# Test Wiki\n\n**判断**：A 工具好用\n- 置信度：high\n- 来源：raw/x.md\n"
+            self._write_wiki(wiki_dir, "test.md", content)
+            results = kb.scan_aging_wikis(wiki_dir, dt.date(2026, 6, 23))
+            self.assertEqual(results, [])
+
+    def test_readme_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            content = "# README\n\n" + self._judgment_block("Some thing", "2020-01")
+            self._write_wiki(wiki_dir, "README.md", content)
+            results = kb.scan_aging_wikis(wiki_dir, dt.date(2026, 6, 23))
+            self.assertEqual(results, [])
+
+    def test_multiple_judgments_in_one_wiki(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            content = (
+                "# Test Wiki\n\n"
+                + self._judgment_block("A 工具", "2020-01")
+                + "\n"
+                + self._judgment_block("B 工具", "2028-01")
+            )
+            self._write_wiki(wiki_dir, "test.md", content)
+            results = kb.scan_aging_wikis(wiki_dir, dt.date(2026, 6, 23), aging_threshold_days=30)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].label, "A 工具")
+
+
+class TestBuildAgingReport(unittest.TestCase):
+    def _make_entry(self, name: str, kind: str, label: str, days_diff: int) -> kb.AgingEntry:
+        status = "expired" if days_diff < 0 else "aging"
+        valid_until = dt.date(2026, 6, 23) + dt.timedelta(days=days_diff)
+        return kb.AgingEntry(
+            file=pathlib.Path(f"/tmp/{name}"),
+            kind=kind,
+            label=label,
+            valid_until=valid_until,
+            status=status,
+            days_diff=days_diff,
+        )
+
+    def test_expired_raw_shows_expired_tag(self):
+        entry = self._make_entry("raw/old.md", "raw", "Old Tool", -10)
+        report = kb.build_aging_report([entry], [], dt.date(2026, 6, 23))
+        self.assertIn("EXPIRED", report)
+        self.assertIn("Old Tool", report)
+        self.assertIn("已过期 10 天", report)
+
+    def test_aging_raw_shows_aging_tag(self):
+        entry = self._make_entry("raw/soon.md", "raw", "Soon Tool", 5)
+        report = kb.build_aging_report([entry], [], dt.date(2026, 6, 23))
+        self.assertIn("AGING", report)
+        self.assertIn("还剩 5 天", report)
+
+    def test_wiki_judgment_in_wiki_section(self):
+        entry = self._make_entry("wiki/test.md", "wiki_judgment", "Some judgment", -30)
+        report = kb.build_aging_report([], [entry], dt.date(2026, 6, 23))
+        self.assertIn("Wiki 判断", report)
+        self.assertIn("Some judgment", report)
+
+    def test_empty_entries_show_placeholder(self):
+        report = kb.build_aging_report([], [], dt.date(2026, 6, 23))
+        self.assertIn("无到期或即将到期条目", report)
+        self.assertIn("无到期或即将到期判断", report)
+
+    def test_report_header_contains_date(self):
+        report = kb.build_aging_report([], [], dt.date(2026, 6, 23))
+        self.assertIn("2026-06-23", report)
+
+
+class TestParseValidUntil(unittest.TestCase):
+    def test_full_date(self):
+        result = kb._parse_valid_until("2026-12-31")
+        self.assertEqual(result, dt.date(2026, 12, 31))
+
+    def test_year_month_becomes_first_of_month(self):
+        result = kb._parse_valid_until("2026-12")
+        self.assertEqual(result, dt.date(2026, 12, 1))
+
+    def test_empty_string_returns_none(self):
+        result = kb._parse_valid_until("")
+        self.assertIsNone(result)
+
+    def test_invalid_string_returns_none(self):
+        result = kb._parse_valid_until("not-a-date")
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
