@@ -306,6 +306,27 @@ def _parse_valid_until(date_str: str) -> "dt.date | None":
         return None
 
 
+def raw_aging_status(
+    text: str,
+    today: dt.date,
+    threshold_days: int = 30,
+) -> str:
+    """Return aging status string for a raw note's text.
+
+    Returns one of: "expired", "aging", "active", "-" (no valid_until).
+    """
+    date_str = frontmatter_value(text, "valid_until")
+    valid_until = _parse_valid_until(date_str)
+    if valid_until is None:
+        return "-"
+    days_diff = (valid_until - today).days
+    if days_diff < 0:
+        return "expired"
+    if days_diff <= threshold_days:
+        return "aging"
+    return "active"
+
+
 @dataclasses.dataclass
 class AgingEntry:
     file: pathlib.Path

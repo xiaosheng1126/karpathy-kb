@@ -856,5 +856,52 @@ class TestBatchDeprecateWikiJudgments(unittest.TestCase):
         self.assertEqual(count, 0)
 
 
+class TestRawAgingStatus(unittest.TestCase):
+    """Tests for raw_aging_status() helper."""
+
+    def _make_text(self, valid_until: str) -> str:
+        return f"---\nstatus: fetched\nvalid_until: {valid_until}\n---\n"
+
+    def test_no_valid_until_returns_dash(self):
+        text = "---\nstatus: fetched\n---\n"
+        today = dt.date(2026, 6, 23)
+        result = kb.raw_aging_status(text, today)
+        self.assertEqual(result, "-")
+
+    def test_expired_returns_expired(self):
+        text = self._make_text("2026-05-01")
+        today = dt.date(2026, 6, 23)
+        result = kb.raw_aging_status(text, today)
+        self.assertEqual(result, "expired")
+
+    def test_within_threshold_returns_aging(self):
+        # 10 days from now, default threshold=30 → aging
+        text = self._make_text("2026-07-03")
+        today = dt.date(2026, 6, 23)
+        result = kb.raw_aging_status(text, today)
+        self.assertEqual(result, "aging")
+
+    def test_beyond_threshold_returns_active(self):
+        # 60 days from now → active
+        text = self._make_text("2026-08-22")
+        today = dt.date(2026, 6, 23)
+        result = kb.raw_aging_status(text, today)
+        self.assertEqual(result, "active")
+
+    def test_custom_threshold(self):
+        # 20 days out, threshold=10 → active
+        text = self._make_text("2026-07-13")
+        today = dt.date(2026, 6, 23)
+        result = kb.raw_aging_status(text, today, threshold_days=10)
+        self.assertEqual(result, "active")
+
+    def test_exact_expiry_day_is_aging(self):
+        # valid_until == today → days_diff == 0 → aging (0 在 0..30 范围内)
+        text = self._make_text("2026-06-23")
+        today = dt.date(2026, 6, 23)
+        result = kb.raw_aging_status(text, today)
+        self.assertEqual(result, "aging")
+
+
 if __name__ == "__main__":
     unittest.main()
