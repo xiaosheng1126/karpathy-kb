@@ -685,5 +685,96 @@ class TestCompileOutputPath(unittest.TestCase):
                 kb.ROOT = original_root
 
 
+class TestRenderTemplate(unittest.TestCase):
+    def test_replaces_single_marker(self):
+        template = "Hello %%NAME%%!"
+        result = kb._render_template(template, {"NAME": "World"})
+        self.assertEqual(result, "Hello World!")
+
+    def test_replaces_multiple_markers(self):
+        template = "%%A%% and %%B%%"
+        result = kb._render_template(template, {"A": "foo", "B": "bar"})
+        self.assertEqual(result, "foo and bar")
+
+    def test_unknown_marker_left_intact(self):
+        template = "%%KNOWN%% %%UNKNOWN%%"
+        result = kb._render_template(template, {"KNOWN": "x"})
+        self.assertEqual(result, "x %%UNKNOWN%%")
+
+    def test_empty_value_replaces_marker(self):
+        template = "before\n%%EMPTY%%\nafter"
+        result = kb._render_template(template, {"EMPTY": ""})
+        self.assertEqual(result, "before\n\nafter")
+
+    def test_multiline_value(self):
+        template = "## Section\n\n%%CONTENT%%\n\n## End"
+        result = kb._render_template(template, {"CONTENT": "line1\nline2"})
+        self.assertIn("line1\nline2", result)
+
+
+class TestBuildWeeklyPromptTemplate(unittest.TestCase):
+    def test_uses_template_when_file_exists(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            (root / "profile.md").write_text("# Profile\n用户偏好", encoding="utf-8")
+            (root / "prompts").mkdir()
+            (root / "prompts" / "weekly.md").write_text("周报指令", encoding="utf-8")
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            wiki_dir = root / "wiki"
+            wiki_dir.mkdir()
+            template_dir = root / "templates"
+            template_dir.mkdir()
+            (template_dir / "weekly_technical.md").write_text(
+                "# %%WEEK_LABEL%%\n%%PROFILE%%\n%%RAWS_SECTION%%",
+                encoding="utf-8",
+            )
+            config_roles = root / "config" / "roles"
+            config_roles.mkdir(parents=True)
+            (config_roles / "technical_practitioner.yaml").write_text(
+                "role_id: technical_practitioner\ntime_window_days: 7\ncold_start_threshold: 5\nfocus_areas: [Android]\noutput_template: templates/weekly_technical.md\n",
+                encoding="utf-8",
+            )
+            result = kb._build_weekly_prompt_from_root(
+                root=root,
+                raw_dir=raw_dir,
+                role_id="technical_practitioner",
+            )
+            self.assertIn("用户偏好", result)
+            self.assertNotIn("%%WEEK_LABEL%%", result)
+            # 简化模板没有角色关注领域 section，fallback 有 —— 证明走的是模板路径
+            self.assertNotIn("角色关注领域", result)
+
+    def test_fallback_when_template_missing(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            (root / "profile.md").write_text("# Profile\n用户偏好", encoding="utf-8")
+            (root / "prompts").mkdir()
+            (root / "prompts" / "weekly.md").write_text("周报指令", encoding="utf-8")
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            wiki_dir = root / "wiki"
+            wiki_dir.mkdir()
+            template_dir = root / "templates"
+            template_dir.mkdir()
+            # 不创建 weekly_technical.md → fallback 路径
+            config_roles = root / "config" / "roles"
+            config_roles.mkdir(parents=True)
+            (config_roles / "technical_practitioner.yaml").write_text(
+                "role_id: technical_practitioner\ntime_window_days: 7\ncold_start_threshold: 5\nfocus_areas: [Android]\noutput_template: templates/weekly_technical.md\n",
+                encoding="utf-8",
+            )
+            result = kb._build_weekly_prompt_from_root(
+                root=root,
+                raw_dir=raw_dir,
+                role_id="technical_practitioner",
+            )
+            self.assertIn("用户偏好", result)
+            # fallback 路径包含完整标题格式，模板路径没有
+            self.assertIn("技术者周报", result)
+
+
 if __name__ == "__main__":
     unittest.main()

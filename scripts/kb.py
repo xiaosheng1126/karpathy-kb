@@ -678,19 +678,38 @@ def load_role_profile(role_id: str) -> dict:
     return _parse_simple_yaml(config_path.read_text(encoding="utf-8"))
 
 
-def build_weekly_prompt(role_id: str = "technical_practitioner") -> str:
-    profile = load_role_profile(role_id)
+def _render_template(template: str, ctx: dict) -> str:
+    """Replace %%MARKER%% placeholders in template with values from ctx."""
+    for key, value in ctx.items():
+        template = template.replace(f"%%{key}%%", value)
+    return template
+
+
+def _build_weekly_prompt_from_root(
+    root: pathlib.Path,
+    raw_dir: pathlib.Path,
+    role_id: str = "technical_practitioner",
+) -> str:
+    profile_path = root / "profile.md"
+    prompts_dir = root / "prompts"
+    wiki_dir = root / "wiki"
+
+    config_path = root / "config" / "roles" / f"{role_id}.yaml"
+    if not config_path.exists():
+        raise SystemExit(f"role profile not found: {config_path}")
+    profile = _parse_simple_yaml(config_path.read_text(encoding="utf-8"))
+
     time_window = int(profile.get("time_window_days", 7))
     threshold = int(profile.get("cold_start_threshold", 5))
     focus_areas = profile.get("focus_areas", [])
     if isinstance(focus_areas, str):
         focus_areas = [focus_areas]
+    template_rel = profile.get("output_template", "")
 
     today = dt.date.today()
     cutoff = today - dt.timedelta(days=time_window)
     week_label = today.strftime("%Y-W%W")
 
-    raw_dir = _require_raw_dir()
     raws = _raws_in_window(raw_dir, cutoff)
 
     cold_start_warning = ""
@@ -703,17 +722,20 @@ def build_weekly_prompt(role_id: str = "technical_practitioner") -> str:
     raws_section = ""
     for path, text, saved_date in sorted(raws, key=lambda x: x[2]):
         raws_section += f"\n---\n### {path.name} (saved: {saved_date})\n\n{text}\n"
+    if not raws_section:
+        raws_section = "（本周无 raw 资料）"
 
-    wiki_dir = ROOT / "wiki"
     wiki_section = ""
     if wiki_dir.exists():
         for path in sorted(wiki_dir.glob("*.md")):
             if path.name == "README.md":
                 continue
             wiki_section += f"\n---\n### wiki/{path.name}\n\n{read_text(path)}\n"
+    if not wiki_section:
+        wiki_section = "（暂无 wiki 内容）"
 
     weekly_instructions = ""
-    instructions_path = ROOT / "prompts" / "weekly.md"
+    instructions_path = prompts_dir / "weekly.md"
     if instructions_path.exists():
         weekly_instructions = read_text(instructions_path)
 
@@ -723,13 +745,36 @@ def build_weekly_prompt(role_id: str = "technical_practitioner") -> str:
     aging_section = f"\n{aging_block}" if aging_block else ""
 
     focus_str = "、".join(focus_areas) if focus_areas else "技术领域"
+    profile_text = read_text(profile_path) if profile_path.exists() else ""
 
+    ctx = {
+        "WEEK_LABEL": week_label,
+        "COLD_START_WARNING": cold_start_warning,
+        "AGING_SECTION": aging_section,
+        "PROFILE": profile_text,
+        "FOCUS_AREAS": focus_str,
+        "WEEKLY_INSTRUCTIONS": weekly_instructions,
+        "RAWS_HEADER": f"{cutoff} 至 {today}，共 {len(raws)} 条",
+        "RAWS_SECTION": raws_section,
+        "WIKI_SECTION": wiki_section,
+        "CUTOFF_DATE": str(cutoff),
+        "TODAY": str(today),
+        "RAW_COUNT": str(len(raws)),
+    }
+
+    # 尝试加载模板
+    if template_rel:
+        template_path = root / template_rel
+        if template_path.exists():
+            return _render_template(read_text(template_path), ctx)
+
+    # Fallback：原有硬编码格式
     return f"""# 生成 {week_label} 技术者周报
 
 {cold_start_warning}{aging_section}
 ## 用户 Profile
 
-{read_text(PROFILE)}
+{profile_text}
 
 ## 角色关注领域
 
@@ -741,16 +786,24 @@ def build_weekly_prompt(role_id: str = "technical_practitioner") -> str:
 
 ## 本周 Raw 资料（{cutoff} 至 {today}，共 {len(raws)} 条）
 
-{raws_section if raws_section else "（本周无 raw 资料）"}
+{raws_section}
 
 ## Wiki 长期知识上下文
 
-{wiki_section if wiki_section else "（暂无 wiki 内容）"}
+{wiki_section}
 
 ## 输出目标
 
 请生成 `reviews/{week_label}.md` 的内容。直接输出 Markdown 正文，不需要额外说明。
 """
+
+
+def build_weekly_prompt(role_id: str = "technical_practitioner") -> str:
+    return _build_weekly_prompt_from_root(
+        root=ROOT,
+        raw_dir=_require_raw_dir(),
+        role_id=role_id,
+    )
 
 
 def create_raw(
