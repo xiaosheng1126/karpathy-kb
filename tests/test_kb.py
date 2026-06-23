@@ -364,5 +364,38 @@ class TestParseValidUntil(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestBuildAgingBlock(unittest.TestCase):
+    def _make_entry(self, status: str, days_diff: int, label: str, file_name: str = "test.md") -> "kb.AgingEntry":
+        valid_until = dt.date(2026, 6, 23) + dt.timedelta(days=days_diff)
+        return kb.AgingEntry(pathlib.Path(f"/tmp/{file_name}"), "raw", label, valid_until, status, days_diff)
+
+    def test_empty_when_no_entries(self):
+        result = kb.build_aging_block([], [])
+        self.assertEqual(result, "")
+
+    def test_expired_entry_appears(self):
+        entry = self._make_entry("expired", -10, "过期文章")
+        result = kb.build_aging_block([entry], [])
+        self.assertIn("[EXPIRED]", result)
+        self.assertIn("过期文章", result)
+
+    def test_aging_entry_appears(self):
+        entry = self._make_entry("aging", 5, "即将过期文章")
+        result = kb.build_aging_block([entry], [])
+        self.assertIn("[AGING", result)
+        self.assertIn("即将过期文章", result)
+
+    def test_section_header_present(self):
+        entry = self._make_entry("expired", -1, "任意标题")
+        result = kb.build_aging_block([entry], [])
+        self.assertIn("知识老化预警", result)
+
+    def test_wiki_entries_included(self):
+        entry = self._make_entry("expired", -5, "Wiki判断", "wiki.md")
+        result = kb.build_aging_block([], [entry])
+        self.assertIn("[EXPIRED]", result)
+        self.assertIn("Wiki判断", result)
+
+
 if __name__ == "__main__":
     unittest.main()

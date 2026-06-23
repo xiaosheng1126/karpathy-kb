@@ -408,6 +408,27 @@ def build_aging_report(
     return "\n".join(lines)
 
 
+def build_aging_block(
+    raw_entries: list[AgingEntry],
+    wiki_entries: list[AgingEntry],
+) -> str:
+    all_entries = raw_entries + wiki_entries
+    if not all_entries:
+        return ""
+
+    def days_label(e: AgingEntry) -> str:
+        if e.status == "expired":
+            return f"已过期 {-e.days_diff} 天"
+        return f"还剩 {e.days_diff} 天"
+
+    lines: list[str] = ["## ⚠ 知识老化预警", "", "以下条目已过期或即将过期，建议在周报中提及或标注：", ""]
+    for e in all_entries:
+        tag = "EXPIRED" if e.status == "expired" else "AGING  "
+        lines.append(f"- [{tag}] `{display_path(e.file)}` — {e.label}（有效期: {e.valid_until}, {days_label(e)}）")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     rows: list[tuple[pathlib.Path, str, str]] = []
     for path in sorted(_require_raw_dir().glob("*.md")):
@@ -527,11 +548,16 @@ def build_weekly_prompt(role_id: str = "technical_practitioner") -> str:
     if instructions_path.exists():
         weekly_instructions = read_text(instructions_path)
 
+    aging_raw_entries = scan_aging_raws(raw_dir, today)
+    aging_wiki_entries = scan_aging_wikis(wiki_dir, today)
+    aging_block = build_aging_block(aging_raw_entries, aging_wiki_entries)
+    aging_section = f"\n{aging_block}" if aging_block else ""
+
     focus_str = "、".join(focus_areas) if focus_areas else "技术领域"
 
     return f"""# 生成 {week_label} 技术者周报
 
-{cold_start_warning}
+{cold_start_warning}{aging_section}
 ## 用户 Profile
 
 {read_text(PROFILE)}
