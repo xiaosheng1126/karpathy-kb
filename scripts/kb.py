@@ -322,6 +322,27 @@ def build_review_prompt(raw_path: pathlib.Path) -> str:
 
 
 def build_publish_prompt(raw_path: pathlib.Path) -> str:
+    raw_text = read_text(raw_path)
+    targets = frontmatter_list_value(raw_text, "wiki_targets")
+
+    weave_back_block = ""
+    if targets:
+        matched, unmatched = find_matching_wikis(targets, ROOT / "wiki")
+        lines: list[str] = ["", "## 往回织提示（Weave-Back）", ""]
+        if matched:
+            lines.append("以下已有 wiki 与 wiki_targets 匹配，发布时请检查是否需要更新：")
+            lines.append("")
+            for target, path, title in matched:
+                rel = path.relative_to(ROOT)
+                lines.append(f"- {rel}（《{title}》）→ 目标：{target}")
+        if unmatched:
+            lines.append("")
+            lines.append("以下 wiki_targets 尚无对应 wiki，建议新建：")
+            lines.append("")
+            for t in unmatched:
+                lines.append(f"- {t}")
+        weave_back_block = "\n".join(lines)
+
     return f"""# Publish This Raw Note
 
 用户已经明确确认可以发布。请基于 raw 更新 wiki、index 和 log，并把 raw status 改为 published。
@@ -336,7 +357,7 @@ def build_publish_prompt(raw_path: pathlib.Path) -> str:
 
 ## Raw Note
 
-{read_text(raw_path)}
+{raw_text}{weave_back_block}
 """
 
 
