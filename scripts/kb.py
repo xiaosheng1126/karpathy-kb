@@ -1070,6 +1070,11 @@ def main(argv: list[str]) -> int:
 
     list_cmd = sub.add_parser("list", help="list raw notes")
     list_cmd.add_argument("--status", help="filter by raw status, for example fetched")
+    list_cmd.add_argument(
+        "--aging",
+        action="store_true",
+        help="include aging status column (active/aging/expired/-)",
+    )
 
     review = sub.add_parser("review", help="print a review prompt for a raw note")
     review.add_argument("raw_file", nargs="?", help="raw note path; defaults to latest raw")
@@ -1137,8 +1142,14 @@ def main(argv: list[str]) -> int:
         rows = list_raw(args.status)
         if not rows:
             return 0
+        today = dt.date.today()
         for path, raw_status, title in rows:
-            print(f"{raw_status}\t{display_path(path)}\t{title}")
+            if args.aging:
+                text = read_text(path)
+                aging = raw_aging_status(text, today)
+                print(f"{raw_status}\t{aging}\t{display_path(path)}\t{title}")
+            else:
+                print(f"{raw_status}\t{display_path(path)}\t{title}")
         return 0
 
     if args.command == "review":

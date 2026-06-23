@@ -1,9 +1,11 @@
 """Tests for kb.py new functionality."""
 import datetime as dt
+import io
 import pathlib
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "scripts"))
 import kb
@@ -901,6 +903,65 @@ class TestRawAgingStatus(unittest.TestCase):
         today = dt.date(2026, 6, 23)
         result = kb.raw_aging_status(text, today)
         self.assertEqual(result, "aging")
+
+
+class TestListAgingColumn(unittest.TestCase):
+    """Tests for kb.py list --aging flag output."""
+
+    def _raw_text(self, status="fetched", title="Test Note", valid_until=None):
+        lines = ["---", f"status: {status}", f"title: {title}"]
+        if valid_until:
+            lines.append(f"valid_until: {valid_until}")
+        lines += ["---", ""]
+        return "\n".join(lines)
+
+    def _run_list(self, tmp_dir, args, note_text):
+        """Write a single raw note and run kb.main with given args."""
+        raw_dir = tmp_dir / "raw"
+        raw_dir.mkdir(exist_ok=True)
+        (raw_dir / "note1.md").write_text(note_text, encoding="utf-8")
+        with unittest.mock.patch.object(kb, "RAW_DIR", raw_dir):
+            buf = io.StringIO()
+            with unittest.mock.patch("sys.stdout", buf):
+                result = kb.main(args)
+        return result, buf.getvalue()
+
+    def test_aging_flag_shows_expired(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            result, out = self._run_list(
+                tmp, ["list", "--aging"], self._raw_text(valid_until="2026-05-01")
+            )
+            self.assertEqual(result, 0)
+            self.assertIn("expired", out)
+
+    def test_aging_flag_shows_active(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            result, out = self._run_list(
+                tmp, ["list", "--aging"], self._raw_text(valid_until="2030-01-01")
+            )
+            self.assertEqual(result, 0)
+            self.assertIn("active", out)
+
+    def test_aging_flag_dash_for_no_valid_until(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            result, out = self._run_list(
+                tmp, ["list", "--aging"], self._raw_text()
+            )
+            self.assertEqual(result, 0)
+            self.assertIn("\t-\t", out)
+
+    def test_without_aging_flag_no_aging_column(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            result, out = self._run_list(
+                tmp, ["list"], self._raw_text(valid_until="2026-05-01")
+            )
+            self.assertEqual(result, 0)
+            # without --aging flag no "expired" column appears
+            self.assertNotIn("expired", out)
 
 
 if __name__ == "__main__":
