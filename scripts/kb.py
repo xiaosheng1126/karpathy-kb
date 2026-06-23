@@ -538,6 +538,34 @@ def deprecate_wiki_judgment(
     raise ValueError(f"no active judgment matching '{judgment_substr}' found")
 
 
+def batch_deprecate_raws(
+    confirmed: list[tuple["AgingEntry", str]],
+    today: dt.date,
+) -> int:
+    """Apply deprecation to each confirmed raw entry. Returns count of files written."""
+    count = 0
+    for entry, reason in confirmed:
+        text = read_text(entry.file)
+        updated = deprecate_raw(text, reason, today)
+        entry.file.write_text(updated, encoding="utf-8")
+        count += 1
+    return count
+
+
+def batch_deprecate_wiki_judgments(
+    confirmed: list[tuple["AgingEntry", str]],
+    today: dt.date,
+) -> int:
+    """Apply deprecation to each confirmed wiki judgment entry. Returns count of files written."""
+    count = 0
+    for entry, reason in confirmed:
+        text = read_text(entry.file)
+        updated = deprecate_wiki_judgment(text, entry.label, reason, today)
+        entry.file.write_text(updated, encoding="utf-8")
+        count += 1
+    return count
+
+
 def find_raws_for_topic(
     topic: str,
     raw_dir: pathlib.Path,

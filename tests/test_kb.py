@@ -776,5 +776,85 @@ class TestBuildWeeklyPromptTemplate(unittest.TestCase):
             self.assertIn("技术者周报", result)
 
 
+class TestBatchDeprecateRaws(unittest.TestCase):
+    def _write_raw(self, raw_dir: pathlib.Path, name: str, valid_until: str, title: str = "Test") -> None:
+        (raw_dir / name).write_text(
+            f"---\nvalid_until: {valid_until}\ntitle: {title}\nstatus: fetched\n---\n# {title}\n",
+            encoding="utf-8",
+        )
+
+    def test_applies_deprecation_to_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            self._write_raw(raw_dir, "old.md", "2020-01-01", "Old Tool")
+            today = dt.date(2026, 6, 23)
+            entry = kb.AgingEntry(
+                file=raw_dir / "old.md",
+                kind="raw",
+                label="Old Tool",
+                valid_until=dt.date(2020, 1, 1),
+                status="expired",
+                days_diff=-2365,
+            )
+            count = kb.batch_deprecate_raws([(entry, "竞品已取代")], today)
+            self.assertEqual(count, 1)
+            updated = (raw_dir / "old.md").read_text(encoding="utf-8")
+            self.assertIn("竞品已取代", updated)
+
+    def test_returns_count_of_applied(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = pathlib.Path(tmpdir)
+            self._write_raw(raw_dir, "a.md", "2020-01-01", "A")
+            self._write_raw(raw_dir, "b.md", "2020-01-01", "B")
+            today = dt.date(2026, 6, 23)
+            entries = [
+                kb.AgingEntry(raw_dir / "a.md", "raw", "A", dt.date(2020, 1, 1), "expired", -2365),
+                kb.AgingEntry(raw_dir / "b.md", "raw", "B", dt.date(2020, 1, 1), "expired", -2365),
+            ]
+            count = kb.batch_deprecate_raws([(e, "过期") for e in entries], today)
+            self.assertEqual(count, 2)
+
+    def test_empty_list_returns_zero(self):
+        count = kb.batch_deprecate_raws([], dt.date(2026, 6, 23))
+        self.assertEqual(count, 0)
+
+
+class TestBatchDeprecateWikiJudgments(unittest.TestCase):
+    def _write_wiki(self, wiki_dir: pathlib.Path, name: str, statement: str, valid_until: str) -> pathlib.Path:
+        content = (
+            f"# Test Wiki\n\n"
+            f"**判断**：{statement}\n"
+            f"- 置信度：medium\n"
+            f"- 有效期：{valid_until}\n"
+            f"- 来源：raw/test.md\n"
+        )
+        path = wiki_dir / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_applies_deprecation_to_wiki_judgment(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            path = self._write_wiki(wiki_dir, "test.md", "X 工具值得跟踪", "2020-01")
+            today = dt.date(2026, 6, 23)
+            entry = kb.AgingEntry(
+                file=path,
+                kind="wiki_judgment",
+                label="X 工具值得跟踪",
+                valid_until=dt.date(2020, 1, 1),
+                status="expired",
+                days_diff=-2365,
+            )
+            count = kb.batch_deprecate_wiki_judgments([(entry, "已被 Y 取代")], today)
+            self.assertEqual(count, 1)
+            updated = path.read_text(encoding="utf-8")
+            self.assertIn("~~", updated)
+            self.assertIn("已被 Y 取代", updated)
+
+    def test_empty_list_returns_zero(self):
+        count = kb.batch_deprecate_wiki_judgments([], dt.date(2026, 6, 23))
+        self.assertEqual(count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
