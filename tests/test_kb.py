@@ -964,5 +964,261 @@ class TestListAgingColumn(unittest.TestCase):
             self.assertNotIn("expired", out)
 
 
+class TestWeeklyCache(unittest.TestCase):
+    """Tests for weekly prompt caching."""
+
+    def _write_raw(self, raw_dir, name, saved_at=None, title="Test"):
+        today = dt.date.today().isoformat()
+        (raw_dir / name).write_text(
+            f"---\nstatus: fetched\ntitle: {title}\nsaved_at: {saved_at or today}\n---\n",
+            encoding="utf-8",
+        )
+
+    def _setup_kb(self, tmp_path):
+        """Create minimal kb layout: raw/, wiki/, profile.md, prompts/weekly.md"""
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "weekly.md").write_text("generate report", encoding="utf-8")
+        (tmp_path / "profile.md").write_text("# Profile\n", encoding="utf-8")
+        config_dir = tmp_path / "config" / "roles"
+        config_dir.mkdir(parents=True)
+        (config_dir / "technical_practitioner.yaml").write_text(
+            "role_id: technical_practitioner\ndisplay_name: 技术从业者\n"
+            "focus_areas: [Android]\ntime_window_days: 7\n"
+            "output_template: templates/weekly_technical.md\ncold_start_threshold: 5\n",
+            encoding="utf-8",
+        )
+        return raw_dir
+
+    def test_cache_created_on_first_run(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            raw_dir = self._setup_kb(tmp)
+            with unittest.mock.patch.object(kb, "ROOT", tmp), \
+                 unittest.mock.patch.object(kb, "RAW_DIR", raw_dir), \
+                 unittest.mock.patch.object(kb, "PROFILE", tmp / "profile.md"), \
+                 unittest.mock.patch.object(kb, "PROMPTS_DIR", tmp / "prompts"):
+                kb.build_weekly_prompt("technical_practitioner")
+            cache_dir = tmp / ".weekly-cache"
+            self.assertTrue(cache_dir.exists())
+            files = list(cache_dir.glob("*.txt"))
+            self.assertEqual(len(files), 1)
+
+    def test_cache_hit_skips_rebuild(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            raw_dir = self._setup_kb(tmp)
+            cache_dir = tmp / ".weekly-cache"
+            cache_dir.mkdir()
+            week_label = dt.date.today().strftime("%Y-W%W")
+            cache_file = cache_dir / f"technical_practitioner-{week_label}.txt"
+            cache_file.write_text("CACHED CONTENT", encoding="utf-8")
+
+            with unittest.mock.patch.object(kb, "ROOT", tmp), \
+                 unittest.mock.patch.object(kb, "RAW_DIR", raw_dir), \
+                 unittest.mock.patch.object(kb, "PROFILE", tmp / "profile.md"), \
+                 unittest.mock.patch.object(kb, "PROMPTS_DIR", tmp / "prompts"):
+                result = kb.build_weekly_prompt("technical_practitioner")
+            self.assertEqual(result, "CACHED CONTENT")
+
+    def test_no_cache_flag_ignores_cache(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            raw_dir = self._setup_kb(tmp)
+            cache_dir = tmp / ".weekly-cache"
+            cache_dir.mkdir()
+            week_label = dt.date.today().strftime("%Y-W%W")
+            cache_file = cache_dir / f"technical_practitioner-{week_label}.txt"
+            cache_file.write_text("CACHED CONTENT", encoding="utf-8")
+
+            with unittest.mock.patch.object(kb, "ROOT", tmp), \
+                 unittest.mock.patch.object(kb, "RAW_DIR", raw_dir), \
+                 unittest.mock.patch.object(kb, "PROFILE", tmp / "profile.md"), \
+                 unittest.mock.patch.object(kb, "PROMPTS_DIR", tmp / "prompts"):
+                result = kb.build_weekly_prompt("technical_practitioner", use_cache=False)
+            self.assertNotEqual(result, "CACHED CONTENT")
+
+    def test_cache_key_includes_role_and_week(self):
+        """Two different roles produce separate cache files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            raw_dir = self._setup_kb(tmp)
+            # Add product_builder role
+            (tmp / "config" / "roles" / "product_builder.yaml").write_text(
+                "role_id: product_builder\ndisplay_name: 产品思考者\n"
+                "focus_areas: [产品]\ntime_window_days: 7\n"
+                "output_template: templates/weekly_technical.md\ncold_start_threshold: 3\n",
+                encoding="utf-8",
+            )
+            with unittest.mock.patch.object(kb, "ROOT", tmp), \
+                 unittest.mock.patch.object(kb, "RAW_DIR", raw_dir), \
+                 unittest.mock.patch.object(kb, "PROFILE", tmp / "profile.md"), \
+                 unittest.mock.patch.object(kb, "PROMPTS_DIR", tmp / "prompts"):
+                kb.build_weekly_prompt("technical_practitioner")
+                kb.build_weekly_prompt("product_builder")
+            cache_dir = tmp / ".weekly-cache"
+            files = {f.name for f in cache_dir.glob("*.txt")}
+            self.assertTrue(any("technical_practitioner" in f for f in files))
+            self.assertTrue(any("product_builder" in f for f in files))
+
+
+class TestCompileDryRun(unittest.TestCase):
+    """Tests for compile --dry-run preview."""
+
+    def _write_raw(self, raw_dir, name, wiki_targets=None, title="Test"):
+        targets = wiki_targets or []
+        targets_yaml = "[" + ", ".join(targets) + "]"
+        (raw_dir / name).write_text(
+            f"---\nstatus: fetched\ntitle: {title}\nwiki_targets: {targets_yaml}\nsummary: 摘要\n---\n",
+            encoding="utf-8",
+        )
+
+    def _write_wiki(self, wiki_dir, name, title="Wiki Topic"):
+        (wiki_dir / name).write_text(
+            f"---\nstatus: published\n---\n# {title}\n",
+            encoding="utf-8",
+        )
+
+    def test_dry_run_shows_matching_raws(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            raw_dir = tmp / "raw"
+            raw_dir.mkdir()
+            wiki_dir = tmp / "wiki"
+            wiki_dir.mkdir()
+            self._write_raw(raw_dir, "note1.md", ["Android 开发"], "Note 1")
+            self._write_raw(raw_dir, "note2.md", ["Flutter"], "Note 2")
+            result = kb.compile_dry_run("Android", raw_dir, wiki_dir)
+            self.assertIn("note1.md", result)
+            self.assertNotIn("note2.md", result)
+
+    def test_dry_run_shows_existing_wiki(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            raw_dir = tmp / "raw"
+            raw_dir.mkdir()
+            wiki_dir = tmp / "wiki"
+            wiki_dir.mkdir()
+            self._write_raw(raw_dir, "note1.md", ["Android 开发"], "Note 1")
+            self._write_wiki(wiki_dir, "android.md", "Android 开发")
+            result = kb.compile_dry_run("Android", raw_dir, wiki_dir)
+            self.assertIn("android.md", result)
+
+    def test_dry_run_no_raws_reports_zero(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            raw_dir = tmp / "raw"
+            raw_dir.mkdir()
+            wiki_dir = tmp / "wiki"
+            wiki_dir.mkdir()
+            result = kb.compile_dry_run("NonExistentTopic", raw_dir, wiki_dir)
+            self.assertIn("0", result)
+
+    def test_dry_run_no_wiki_reports_new(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            raw_dir = tmp / "raw"
+            raw_dir.mkdir()
+            wiki_dir = tmp / "wiki"
+            wiki_dir.mkdir()
+            self._write_raw(raw_dir, "note1.md", ["Flutter"], "Note 1")
+            result = kb.compile_dry_run("Flutter", raw_dir, wiki_dir)
+            self.assertIn("新建", result)
+
+
+class TestListWiki(unittest.TestCase):
+    """Tests for kb.py list --wiki flag."""
+
+    def _wiki_text(self, title="My Topic", judgment_count=2):
+        lines = [
+            "---",
+            "schema_version: \"1\"",
+            "status: published",
+            "tags: []",
+            "sources: []",
+            "created_at: 2026-01-01",
+            "updated_at: 2026-06-01",
+            "---",
+            "",
+            f"# {title}",
+            "",
+        ]
+        for i in range(judgment_count):
+            lines.append(f"**判断**：判断{i+1}。")
+            lines.append("- 置信度：medium")
+            lines.append("- 有效期：2027-01")
+            lines.append("")
+        return "\n".join(lines)
+
+    def _run_list_wiki(self, tmp_path, args, wiki_texts: dict):
+        """wiki_texts: {filename: text}"""
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        for fname, text in wiki_texts.items():
+            (wiki_dir / fname).write_text(text, encoding="utf-8")
+        buf = io.StringIO()
+        with unittest.mock.patch.object(kb, "ROOT", tmp_path), \
+             unittest.mock.patch("sys.stdout", buf):
+            result = kb.main(args)
+        return result, buf.getvalue()
+
+    def test_wiki_flag_lists_topics(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            result, out = self._run_list_wiki(
+                tmp,
+                ["list", "--wiki"],
+                {"android.md": self._wiki_text("Android")},
+            )
+            self.assertEqual(result, 0)
+            self.assertIn("Android", out)
+
+    def test_wiki_flag_shows_judgment_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            result, out = self._run_list_wiki(
+                tmp,
+                ["list", "--wiki"],
+                {"android.md": self._wiki_text("Android", judgment_count=3)},
+            )
+            self.assertEqual(result, 0)
+            self.assertIn("3", out)
+
+    def test_wiki_flag_skips_readme(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            result, out = self._run_list_wiki(
+                tmp,
+                ["list", "--wiki"],
+                {
+                    "README.md": "# README\n",
+                    "topic.md": self._wiki_text("Real Topic"),
+                },
+            )
+            self.assertEqual(result, 0)
+            self.assertNotIn("README", out)
+            self.assertIn("Real Topic", out)
+
+    def test_wiki_flag_empty_dir_returns_ok(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            result, out = self._run_list_wiki(tmp, ["list", "--wiki"], {})
+            self.assertEqual(result, 0)
+
+    def test_wiki_flag_missing_dir_returns_ok(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            # Don't create wiki dir at all
+            buf = io.StringIO()
+            with unittest.mock.patch.object(kb, "ROOT", tmp), \
+                 unittest.mock.patch("sys.stdout", buf):
+                result = kb.main(["list", "--wiki"])
+            self.assertEqual(result, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

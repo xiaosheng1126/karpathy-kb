@@ -502,6 +502,39 @@ def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     return rows
 
 
+def count_judgments(text: str) -> int:
+    """Count active (non-deprecated) judgment lines in a wiki file."""
+    count = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not (stripped.startswith("**判断**：") or stripped.startswith("**判断**:")):
+            continue
+        if "~~" in stripped:
+            continue
+        count += 1
+    return count
+
+
+def list_wiki(wiki_dir: pathlib.Path) -> list[tuple[pathlib.Path, str, int]]:
+    """Return list of (path, title, judgment_count) for all wiki topics."""
+    rows: list[tuple[pathlib.Path, str, int]] = []
+    if not wiki_dir.exists():
+        return rows
+    for path in sorted(wiki_dir.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        text = read_text(path)
+        title = frontmatter_value(text, "title") or path.stem
+        # Fallback: first H1 heading
+        for line in text.splitlines():
+            if line.startswith("# "):
+                title = line[2:].strip()
+                break
+        n = count_judgments(text)
+        rows.append((path, title, n))
+    return rows
+
+
 def add_wiki_source(wiki_text: str, raw_filename: str) -> str:
     def _update_sources(m: re.Match) -> str:
         inner = m.group(1).strip()
@@ -673,6 +706,38 @@ def find_raws_for_topic(
         key_points_raw = frontmatter_value(text, "key_points")
         results.append((path, summary, key_points_raw))
     return results
+
+
+def compile_dry_run(
+    topic: str,
+    raw_dir: pathlib.Path,
+    wiki_dir: pathlib.Path,
+) -> str:
+    """Return a dry-run summary: which raws match, which wiki exists.
+
+    Does not generate any prompt or write any files.
+    """
+    raw_entries = find_raws_for_topic(topic, raw_dir)
+    slug = slugify_topic(topic)
+    wiki_path = wiki_dir / f"{slug}.md"
+
+    lines: list[str] = [f"[Dry-run] compile topic: {topic}"]
+    lines.append(f"  匹配 raw：{len(raw_entries)} 条")
+    for path, _, _ in raw_entries:
+        lines.append(f"    - {path.name}")
+    if wiki_path.exists():
+        lines.append(f"  已有 wiki：{wiki_path.name}（将更新）")
+    else:
+        # Fuzzy: also check all wiki files for topic in their H1 / filename
+        matched_wikis = [
+            p for p in sorted(wiki_dir.glob("*.md"))
+            if p.name != "README.md" and topic.lower() in p.stem.lower()
+        ]
+        if matched_wikis:
+            lines.append(f"  已有 wiki（模糊匹配）：{', '.join(p.name for p in matched_wikis)}（将更新）")
+        else:
+            lines.append("  已有 wiki：无（将新建）")
+    return "\n".join(lines)
 
 
 def build_compile_prompt(
@@ -917,12 +982,25 @@ def _build_weekly_prompt_from_root(
 """
 
 
-def build_weekly_prompt(role_id: str = "technical_practitioner") -> str:
-    return _build_weekly_prompt_from_root(
-        root=ROOT,
-        raw_dir=_require_raw_dir(),
-        role_id=role_id,
-    )
+def weekly_cache_path(root: pathlib.Path, role_id: str, week_label: str) -> pathlib.Path:
+    """Return the cache file path for a given role and week."""
+    return root / ".weekly-cache" / f"{role_id}-{week_label}.txt"
+
+
+def build_weekly_prompt(role_id: str = "technical_practitioner", use_cache: bool = True) -> str:
+    root = ROOT
+    raw_dir = _require_raw_dir()
+    week_label = dt.date.today().strftime("%Y-W%W")
+    cache_file = weekly_cache_path(root, role_id, week_label)
+
+    if use_cache and cache_file.exists():
+        return cache_file.read_text(encoding="utf-8")
+
+    prompt = _build_weekly_prompt_from_root(root=root, raw_dir=raw_dir, role_id=role_id)
+
+    cache_file.parent.mkdir(exist_ok=True)
+    cache_file.write_text(prompt, encoding="utf-8")
+    return prompt
 
 
 def create_raw(
@@ -1068,12 +1146,17 @@ def main(argv: list[str]) -> int:
         help="override saved_at date (ISO8601, e.g. 2026-06-01) for backfilling historical raws",
     )
 
-    list_cmd = sub.add_parser("list", help="list raw notes")
+    list_cmd = sub.add_parser("list", help="list raw notes or wiki topics")
     list_cmd.add_argument("--status", help="filter by raw status, for example fetched")
     list_cmd.add_argument(
         "--aging",
         action="store_true",
         help="include aging status column (active/aging/expired/-)",
+    )
+    list_cmd.add_argument(
+        "--wiki",
+        action="store_true",
+        help="list wiki topics with judgment counts instead of raw notes",
     )
 
     review = sub.add_parser("review", help="print a review prompt for a raw note")
@@ -1085,6 +1168,12 @@ def main(argv: list[str]) -> int:
     weekly = sub.add_parser("weekly", help="generate weekly report prompt")
     weekly.add_argument("--role", default="technical_practitioner", help="role profile id")
     weekly.add_argument("--output", action="store_true", help="save prompt to reviews/YYYY-WW-prompt.md")
+    weekly.add_argument(
+        "--no-cache",
+        action="store_true",
+        dest="no_cache",
+        help="ignore cached prompt and regenerate from raw/wiki",
+    )
 
     deprecate_cmd = sub.add_parser("deprecate", help="mark a raw or wiki judgment as deprecated")
     deprecate_cmd.add_argument("file", help="path to raw or wiki file (relative to repo root or absolute)")
@@ -1098,6 +1187,12 @@ def main(argv: list[str]) -> int:
         "--output",
         action="store_true",
         help="save prompt to reviews/<topic>-compile-YYYY-MM-DD.md",
+    )
+    compile_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="preview matching raws and wiki without generating a prompt",
     )
 
     aging_cmd = sub.add_parser("aging", help="scan for expired or soon-to-expire entries")
@@ -1139,6 +1234,12 @@ def main(argv: list[str]) -> int:
         return 0
 
     if args.command == "list":
+        if args.wiki:
+            wiki_dir = ROOT / "wiki"
+            wiki_rows = list_wiki(wiki_dir)
+            for path, title, n in wiki_rows:
+                print(f"{n} 条判断\t{display_path(path)}\t{title}")
+            return 0
         rows = list_raw(args.status)
         if not rows:
             return 0
@@ -1163,7 +1264,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     if args.command == "weekly":
-        prompt = build_weekly_prompt(args.role)
+        prompt = build_weekly_prompt(args.role, use_cache=not args.no_cache)
         print(prompt)
         if args.output:
             week_label = dt.date.today().strftime("%Y-W%W")
@@ -1193,6 +1294,10 @@ def main(argv: list[str]) -> int:
 
     if args.command == "compile":
         raw_dir = _require_raw_dir()
+        if args.dry_run:
+            wiki_dir = ROOT / "wiki"
+            print(compile_dry_run(args.topic, raw_dir, wiki_dir))
+            return 0
         raw_entries = find_raws_for_topic(args.topic, raw_dir)
         existing_wiki_path = None
         if args.wiki:

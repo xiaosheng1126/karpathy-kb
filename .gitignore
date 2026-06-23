@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 .source-reader/
 config.json
+.weekly-cache/
