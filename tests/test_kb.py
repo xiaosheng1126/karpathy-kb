@@ -438,5 +438,36 @@ class TestFormatAgingLogEntry(unittest.TestCase):
         self.assertIn("Wiki 判断: 0 已过期，0 即将过期", result)
 
 
+class TestAgingCountsByPath(unittest.TestCase):
+    def _make_entry(self, path: pathlib.Path, status: str) -> "kb.AgingEntry":
+        return kb.AgingEntry(
+            path, "wiki_judgment", "label",
+            dt.date(2026, 6, 23), status, -1 if status == "expired" else 5,
+        )
+
+    def test_expired_and_aging_counted_separately(self):
+        p = pathlib.Path("/tmp/wiki.md")
+        entries = [self._make_entry(p, "expired"), self._make_entry(p, "aging")]
+        result = kb.aging_counts_by_path(entries)
+        self.assertEqual(result[p], (1, 1))
+
+    def test_empty_returns_empty_dict(self):
+        self.assertEqual(kb.aging_counts_by_path([]), {})
+
+    def test_multiple_paths(self):
+        p1 = pathlib.Path("/tmp/a.md")
+        p2 = pathlib.Path("/tmp/b.md")
+        entries = [self._make_entry(p1, "expired"), self._make_entry(p2, "aging")]
+        result = kb.aging_counts_by_path(entries)
+        self.assertEqual(result[p1], (1, 0))
+        self.assertEqual(result[p2], (0, 1))
+
+    def test_only_expired(self):
+        p = pathlib.Path("/tmp/wiki.md")
+        entries = [self._make_entry(p, "expired"), self._make_entry(p, "expired")]
+        result = kb.aging_counts_by_path(entries)
+        self.assertEqual(result[p], (2, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -447,6 +447,19 @@ def format_aging_log_entry(
     )
 
 
+def aging_counts_by_path(
+    entries: list[AgingEntry],
+) -> dict[pathlib.Path, tuple[int, int]]:
+    result: dict[pathlib.Path, tuple[int, int]] = {}
+    for e in entries:
+        exp, ag = result.get(e.file, (0, 0))
+        if e.status == "expired":
+            result[e.file] = (exp + 1, ag)
+        else:
+            result[e.file] = (exp, ag + 1)
+    return result
+
+
 def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     rows: list[tuple[pathlib.Path, str, str]] = []
     for path in sorted(_require_raw_dir().glob("*.md")):
@@ -487,13 +500,24 @@ def build_publish_prompt(raw_path: pathlib.Path) -> str:
     weave_back_block = ""
     if targets:
         matched, unmatched = find_matching_wikis(targets, ROOT / "wiki")
+        today = dt.date.today()
+        wiki_aging = aging_counts_by_path(scan_aging_wikis(ROOT / "wiki", today))
         lines: list[str] = ["", "## 往回织提示（Weave-Back）", ""]
         if matched:
             lines.append("以下已有 wiki 与 wiki_targets 匹配，发布时请检查是否需要更新：")
             lines.append("")
             for target, path, title in matched:
                 rel = path.relative_to(ROOT)
-                lines.append(f"- {rel}（《{title}》）→ 目标：{target}")
+                aging_note = ""
+                if path in wiki_aging:
+                    exp, ag = wiki_aging[path]
+                    parts = []
+                    if exp:
+                        parts.append(f"{exp} 条已过期")
+                    if ag:
+                        parts.append(f"{ag} 条即将过期")
+                    aging_note = f"（⚠ {', '.join(parts)}）"
+                lines.append(f"- {rel}（《{title}》）→ 目标：{target}{aging_note}")
         if unmatched:
             lines.append("")
             lines.append("以下 wiki_targets 尚无对应 wiki，建议新建：")
