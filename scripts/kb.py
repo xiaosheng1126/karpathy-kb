@@ -429,6 +429,24 @@ def build_aging_block(
     return "\n".join(lines)
 
 
+def format_aging_log_entry(
+    today: dt.date,
+    raw_entries: list[AgingEntry],
+    wiki_entries: list[AgingEntry],
+    report_path: pathlib.Path,
+) -> str:
+    expired_raw = sum(1 for e in raw_entries if e.status == "expired")
+    aging_raw = sum(1 for e in raw_entries if e.status == "aging")
+    expired_wiki = sum(1 for e in wiki_entries if e.status == "expired")
+    aging_wiki = sum(1 for e in wiki_entries if e.status == "aging")
+    return (
+        f"\n## {today} 老化扫描\n\n"
+        f"- Raw: {expired_raw} 已过期，{aging_raw} 即将过期\n"
+        f"- Wiki 判断: {expired_wiki} 已过期，{aging_wiki} 即将过期\n"
+        f"- 报告: {display_path(report_path)}\n"
+    )
+
+
 def list_raw(status: str | None = None) -> list[tuple[pathlib.Path, str, str]]:
     rows: list[tuple[pathlib.Path, str, str]] = []
     for path in sorted(_require_raw_dir().glob("*.md")):
@@ -738,6 +756,7 @@ def main(argv: list[str]) -> int:
 
     weekly = sub.add_parser("weekly", help="generate weekly report prompt")
     weekly.add_argument("--role", default="technical_practitioner", help="role profile id")
+    weekly.add_argument("--output", action="store_true", help="save prompt to reviews/YYYY-WW-prompt.md")
 
     aging_cmd = sub.add_parser("aging", help="scan for expired or soon-to-expire entries")
     aging_cmd.add_argument(
@@ -791,7 +810,13 @@ def main(argv: list[str]) -> int:
         return 0
 
     if args.command == "weekly":
-        print(build_weekly_prompt(args.role))
+        prompt = build_weekly_prompt(args.role)
+        print(prompt)
+        if args.output:
+            week_label = dt.date.today().strftime("%Y-W%W")
+            out_path = ROOT / "reviews" / f"{week_label}-prompt.md"
+            out_path.write_text(prompt, encoding="utf-8")
+            print(f"\n保存至 {display_path(out_path)}", file=sys.stderr)
         return 0
 
     if args.command == "aging":
@@ -806,6 +831,11 @@ def main(argv: list[str]) -> int:
             out_path = ROOT / "reviews" / f"aging-{today}.md"
             out_path.write_text(report, encoding="utf-8")
             print(f"\n保存至 {display_path(out_path)}", file=sys.stderr)
+            log_path = ROOT / "log.md"
+            if log_path.exists():
+                entry = format_aging_log_entry(today, raw_entries, wiki_entries, out_path)
+                with log_path.open("a", encoding="utf-8") as f:
+                    f.write(entry)
         return 0
 
     parser.error("unknown command")

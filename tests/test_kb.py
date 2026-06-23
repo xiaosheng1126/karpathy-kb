@@ -397,5 +397,46 @@ class TestBuildAgingBlock(unittest.TestCase):
         self.assertIn("Wiki判断", result)
 
 
+class TestFormatAgingLogEntry(unittest.TestCase):
+    def _make_entry(self, status: str) -> "kb.AgingEntry":
+        return kb.AgingEntry(
+            pathlib.Path("/tmp/test.md"), "raw", "label",
+            dt.date(2026, 6, 23), status, -1 if status == "expired" else 5,
+        )
+
+    def test_counts_expired_and_aging_raws(self):
+        raw_entries = [self._make_entry("expired"), self._make_entry("aging")]
+        result = kb.format_aging_log_entry(
+            dt.date(2026, 6, 23), raw_entries, [], pathlib.Path("/tmp/report.md")
+        )
+        self.assertIn("Raw: 1 已过期，1 即将过期", result)
+
+    def test_counts_expired_and_aging_wikis(self):
+        wiki_entries = [self._make_entry("expired"), self._make_entry("expired")]
+        result = kb.format_aging_log_entry(
+            dt.date(2026, 6, 23), [], wiki_entries, pathlib.Path("/tmp/report.md")
+        )
+        self.assertIn("Wiki 判断: 2 已过期，0 即将过期", result)
+
+    def test_contains_date(self):
+        result = kb.format_aging_log_entry(
+            dt.date(2026, 6, 23), [], [], pathlib.Path("/tmp/report.md")
+        )
+        self.assertIn("2026-06-23", result)
+
+    def test_contains_report_path(self):
+        result = kb.format_aging_log_entry(
+            dt.date(2026, 6, 23), [], [], pathlib.Path("/tmp/my-report.md")
+        )
+        self.assertIn("my-report.md", result)
+
+    def test_empty_entries_show_zero_counts(self):
+        result = kb.format_aging_log_entry(
+            dt.date(2026, 6, 23), [], [], pathlib.Path("/tmp/report.md")
+        )
+        self.assertIn("Raw: 0 已过期，0 即将过期", result)
+        self.assertIn("Wiki 判断: 0 已过期，0 即将过期", result)
+
+
 if __name__ == "__main__":
     unittest.main()
