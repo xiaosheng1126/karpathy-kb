@@ -137,6 +137,23 @@ class TestFindMatchingWikis(unittest.TestCase):
             self.assertEqual(matched, [])
             self.assertEqual(unmatched, ["README"])
 
+    def test_wiki_without_h1_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "no_title.md").write_text("普通段落\n没有标题", encoding="utf-8")
+            matched, unmatched = kb.find_matching_wikis(["no_title"], wiki_dir)
+            self.assertEqual(matched, [])
+            self.assertEqual(unmatched, ["no_title"])
+
+    def test_target_matches_multiple_wikis(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "a.md").write_text("# Flutter 状态管理\n\n内容", encoding="utf-8")
+            (wiki_dir / "b.md").write_text("# Flutter 渲染原理\n\n内容", encoding="utf-8")
+            matched, unmatched = kb.find_matching_wikis(["Flutter"], wiki_dir)
+            self.assertEqual(len(matched), 2)
+            self.assertEqual(unmatched, [])
+
 
 if __name__ == "__main__":
     unittest.main()
