@@ -1,8 +1,5 @@
-// @ts-expect-error Node.js built-in modules are available at runtime
 import { readFileSync } from 'node:fs';
-// @ts-expect-error Node.js built-in modules are available at runtime
 import { fileURLToPath } from 'node:url';
-// @ts-expect-error Node.js built-in modules are available at runtime
 import { join, dirname } from 'node:path';
 
 // kb-site/src/lib → kb-site/src → kb-site → karpathy-kb → generated/
