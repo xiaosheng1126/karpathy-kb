@@ -570,6 +570,78 @@ def generate_wiki_index(wiki_dir: pathlib.Path, today: dt.datetime) -> dict:
     return {"generated_at": today.isoformat(), "items": items}
 
 
+def generate_role_index(roles_dir: pathlib.Path, today: dt.datetime) -> dict:
+    roles: list[dict] = []
+    if roles_dir.exists():
+        for path in sorted(roles_dir.glob("*.yaml")):
+            cfg = _parse_simple_yaml(read_text(path))
+            roles.append({
+                "role_id": cfg.get("role_id", ""),
+                "display_name": cfg.get("display_name", ""),
+                "focus_areas": cfg.get("focus_areas", []),
+            })
+    return {"generated_at": today.isoformat(), "roles": roles}
+
+
+def generate_today_index(
+    wiki_dir: pathlib.Path,
+    today_dt: dt.datetime,
+    threshold_days: int = 30,
+) -> dict:
+    today = today_dt.date()
+    items: list[dict] = []
+    if wiki_dir.exists():
+        for path in sorted(wiki_dir.glob("*.md")):
+            if path.name == "README.md":
+                continue
+            text = read_text(path)
+            if frontmatter_value(text, "status") != "published":
+                continue
+            slug = path.stem
+            title = slug
+            for line in text.splitlines():
+                if line.startswith("# "):
+                    title = line[2:].strip()
+                    break
+            for idx, j in enumerate(extract_wiki_judgments(text)):
+                if not j.get("valid_until"):
+                    continue
+                valid_until = _parse_valid_until(j["valid_until"])
+                if valid_until is None:
+                    continue
+                days_diff = (valid_until - today).days
+                if days_diff > threshold_days:
+                    continue
+                items.append({
+                    "kind": "aging_judgment",
+                    "id": f"{slug}#judgment-{idx}",
+                    "title": title,
+                    "judgment_text": j["text"],
+                    "valid_until": j["valid_until"],
+                    "priority": "high" if days_diff < 0 else "medium",
+                    "actions": ["review", "extend_validity", "deprecate"],
+                })
+    return {"generated_at": today_dt.isoformat(), "items": items}
+
+
+def cmd_generate_index(out_dir: pathlib.Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wiki_dir = ROOT / "wiki"
+    roles_dir = ROOT / "config" / "roles"
+    today = dt.datetime.now().astimezone()
+
+    wi = generate_wiki_index(wiki_dir, today)
+    (out_dir / "wiki-index.json").write_text(json_dumps(wi), encoding="utf-8")
+
+    ri = generate_role_index(roles_dir, today)
+    (out_dir / "role-index.json").write_text(json_dumps(ri), encoding="utf-8")
+
+    ti = generate_today_index(wiki_dir, today)
+    (out_dir / "today-index.json").write_text(json_dumps(ti), encoding="utf-8")
+
+    print(f"Generated 3 index files → {out_dir}", file=sys.stderr)
+
+
 def list_wiki(wiki_dir: pathlib.Path) -> list[tuple[pathlib.Path, str, int]]:
     """Return list of (path, title, judgment_count) for all wiki topics."""
     rows: list[tuple[pathlib.Path, str, int]] = []
@@ -1453,6 +1525,13 @@ def main(argv: list[str]) -> int:
 
     sub.add_parser("doctor", help="check raw/wiki/index/log/role configuration consistency")
 
+    gen_index = sub.add_parser("generate-index", help="generate JSON indexes for kb-site")
+    gen_index.add_argument(
+        "--out",
+        default=str(ROOT / "generated"),
+        help="output directory (default: <repo_root>/generated)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "raw":
@@ -1583,6 +1662,10 @@ def main(argv: list[str]) -> int:
         issues = run_doctor(ROOT, _require_raw_dir())
         print(build_doctor_report(issues))
         return 1 if any(issue.level == "ERROR" for issue in issues) else 0
+
+    if args.command == "generate-index":
+        cmd_generate_index(pathlib.Path(args.out))
+        return 0
 
     parser.error("unknown command")
     return 2

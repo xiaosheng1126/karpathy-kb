@@ -1472,5 +1472,73 @@ class TestGenerateWikiIndex(unittest.TestCase):
             self.assertEqual(result["items"], [])
 
 
+class TestGenerateRoleIndex(unittest.TestCase):
+    def test_reads_yaml_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            roles_dir = pathlib.Path(tmpdir)
+            (roles_dir / "tech.yaml").write_text(
+                "role_id: technical_practitioner\ndisplay_name: 技术从业者\nfocus_areas: [Android, Flutter]\n",
+                encoding="utf-8",
+            )
+            today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)
+            result = kb.generate_role_index(roles_dir, today)
+            self.assertIn("generated_at", result)
+            self.assertEqual(len(result["roles"]), 1)
+            role = result["roles"][0]
+            self.assertEqual(role["role_id"], "technical_practitioner")
+            self.assertEqual(role["display_name"], "技术从业者")
+            self.assertEqual(role["focus_areas"], ["Android", "Flutter"])
+
+    def test_missing_dir_returns_empty_roles(self):
+        today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)
+        result = kb.generate_role_index(pathlib.Path("/nonexistent/roles"), today)
+        self.assertEqual(result["roles"], [])
+
+
+class TestGenerateTodayIndex(unittest.TestCase):
+    EXPIRED_WIKI = (
+        "---\nstatus: published\nupdated_at: 2026-06-01\n---\n"
+        "# Expired Topic\n\n"
+        "**判断**：test statement\n"
+        "- 置信度：high\n"
+        "- 有效期：2025-01\n"
+    )
+    FRESH_WIKI = (
+        "---\nstatus: published\nupdated_at: 2026-06-23\n---\n"
+        "# Fresh Topic\n\n"
+        "**判断**：fresh statement\n"
+        "- 置信度：high\n"
+        "- 有效期：2027-12\n"
+    )
+
+    def test_includes_expired_judgment(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "expired.md").write_text(self.EXPIRED_WIKI, encoding="utf-8")
+            today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)
+            result = kb.generate_today_index(wiki_dir, today)
+            self.assertEqual(len(result["items"]), 1)
+            item = result["items"][0]
+            self.assertEqual(item["kind"], "aging_judgment")
+            self.assertEqual(item["priority"], "high")
+            self.assertIn("review", item["actions"])
+
+    def test_excludes_fresh_judgment(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "fresh.md").write_text(self.FRESH_WIKI, encoding="utf-8")
+            today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)
+            result = kb.generate_today_index(wiki_dir, today)
+            self.assertEqual(result["items"], [])
+
+    def test_item_id_format(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "my-topic.md").write_text(self.EXPIRED_WIKI, encoding="utf-8")
+            today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)
+            result = kb.generate_today_index(wiki_dir, today)
+            self.assertEqual(result["items"][0]["id"], "my-topic#judgment-0")
+
+
 if __name__ == "__main__":
     unittest.main()
