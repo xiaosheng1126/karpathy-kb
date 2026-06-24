@@ -655,6 +655,52 @@ class TestBuildCompilePromptOutputTarget(unittest.TestCase):
         self.assertIn("sources:", result)
 
 
+class TestBuildPublishChecklist(unittest.TestCase):
+    def test_lists_matched_and_unmatched_wiki_targets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            wiki_dir = root / "wiki"
+            wiki_dir.mkdir()
+            raw_path = raw_dir / "source.md"
+            raw_path.write_text(
+                "---\n"
+                "status: fetched\n"
+                "title: Source Note\n"
+                "wiki_targets: [Proxy, Product Idea]\n"
+                "---\n"
+                "# Source Note\n",
+                encoding="utf-8",
+            )
+            (wiki_dir / "proxy.md").write_text("# Proxy Tools\n\n内容", encoding="utf-8")
+
+            checklist = kb.build_publish_checklist(raw_path, root)
+
+            self.assertIn("Publish Checklist: Source Note", checklist)
+            self.assertIn("Status: `fetched`", checklist)
+            self.assertIn("proxy.md", checklist)
+            self.assertIn("wiki/product-idea.md", checklist)
+            self.assertIn("python3 scripts/kb.py doctor", checklist)
+
+    def test_warns_when_raw_has_no_wiki_targets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir = root / "raw"
+            raw_dir.mkdir()
+            (root / "wiki").mkdir()
+            raw_path = raw_dir / "source.md"
+            raw_path.write_text(
+                "---\nstatus: draft\ntitle: Source Note\n---\n# Source Note\n",
+                encoding="utf-8",
+            )
+
+            checklist = kb.build_publish_checklist(raw_path, root)
+
+            self.assertIn("raw 未设置 wiki_targets", checklist)
+            self.assertIn("status 是 `draft`", checklist)
+
+
 class TestCompileOutputPath(unittest.TestCase):
     def test_compile_output_saves_file_with_slug_in_name(self):
         """compile --output 实际写入文件，文件名包含 topic slug。"""
@@ -1346,6 +1392,84 @@ class TestDoctor(unittest.TestCase):
 
     def test_build_doctor_report_ok(self):
         self.assertIn("Doctor OK", kb.build_doctor_report([]))
+
+
+class TestExtractWikiJudgments(unittest.TestCase):
+    WIKI_BODY = """
+---
+status: published
+updated_at: 2026-06-23
+tags: [cloudflare]
+sources: [source.md]
+---
+
+# Title
+
+**判断**：Cloudflare 适合作为边缘基础设施
+- 置信度：high
+- 有效期：2026-12
+- 来源：source.md
+- 不确定性：免费额度可能变化
+
+**判断**：~~已废弃的判断内容~~
+- 置信度：low
+- 有效期：2025-01
+"""
+
+    def test_extracts_active_judgments(self):
+        result = kb.extract_wiki_judgments(self.WIKI_BODY)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "Cloudflare 适合作为边缘基础设施")
+        self.assertEqual(result[0]["confidence"], "high")
+        self.assertEqual(result[0]["valid_until"], "2026-12")
+
+    def test_skips_deprecated_judgments(self):
+        result = kb.extract_wiki_judgments(self.WIKI_BODY)
+        texts = [j["text"] for j in result]
+        self.assertNotIn("已废弃的判断内容", texts)
+
+    def test_empty_body_returns_empty_list(self):
+        result = kb.extract_wiki_judgments("# Title\n\nNo judgments here.")
+        self.assertEqual(result, [])
+
+
+class TestGenerateWikiIndex(unittest.TestCase):
+    def test_generates_items_from_wiki_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "my-topic.md").write_text(
+                "---\nstatus: published\ntags: [test]\nsources: [src.md]\nupdated_at: 2026-06-23\n---\n# My Topic\n\n**判断**：test judgment\n- 置信度：high\n- 有效期：2026-12\n",
+                encoding="utf-8",
+            )
+            today = dt.datetime(2026, 6, 23, 9, 0, 0, tzinfo=dt.timezone.utc)
+            result = kb.generate_wiki_index(wiki_dir, today)
+            self.assertIn("generated_at", result)
+            self.assertEqual(len(result["items"]), 1)
+            item = result["items"][0]
+            self.assertEqual(item["slug"], "my-topic")
+            self.assertEqual(item["title"], "My Topic")
+            self.assertEqual(item["tags"], ["test"])
+            self.assertEqual(item["updated_at"], "2026-06-23")
+            self.assertEqual(len(item["judgments"]), 1)
+
+    def test_skips_readme(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "README.md").write_text("# README", encoding="utf-8")
+            today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)
+            result = kb.generate_wiki_index(wiki_dir, today)
+            self.assertEqual(result["items"], [])
+
+    def test_skips_unpublished(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "draft.md").write_text(
+                "---\nstatus: fetched\nupdated_at: 2026-06-23\n---\n# Draft\n",
+                encoding="utf-8",
+            )
+            today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)
+            result = kb.generate_wiki_index(wiki_dir, today)
+            self.assertEqual(result["items"], [])
 
 
 if __name__ == "__main__":

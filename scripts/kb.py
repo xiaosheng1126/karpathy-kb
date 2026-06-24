@@ -515,6 +515,61 @@ def count_judgments(text: str) -> int:
     return count
 
 
+def extract_wiki_judgments(text: str) -> list[dict]:
+    judgments: list[dict] = []
+    current: dict | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("**判断**：") or stripped.startswith("**判断**:"):
+            if current:
+                judgments.append(current)
+            stmt = re.split("[：:]", stripped, maxsplit=1)[-1].strip()
+            if "~~" in stmt:
+                current = None
+                continue
+            stmt = re.sub(r"~~(.+?)~~", r"\1", stmt).rstrip("。.")
+            current = {"text": stmt, "confidence": "", "valid_until": ""}
+            continue
+        if current is None:
+            continue
+        m = re.match(r"[-*]\s*置信度[：:]\s*(.+)", stripped)
+        if m:
+            current["confidence"] = m.group(1).strip()
+            continue
+        m = re.match(r"[-*]\s*有效期[：:]\s*(\S+)", stripped)
+        if m:
+            current["valid_until"] = m.group(1).strip()
+    if current:
+        judgments.append(current)
+    return [j for j in judgments if j["text"]]
+
+
+def generate_wiki_index(wiki_dir: pathlib.Path, today: dt.datetime) -> dict:
+    items: list[dict] = []
+    if wiki_dir.exists():
+        for path in sorted(wiki_dir.glob("*.md")):
+            if path.name == "README.md":
+                continue
+            text = read_text(path)
+            if frontmatter_value(text, "status") != "published":
+                continue
+            slug = path.stem
+            title = slug
+            for line in text.splitlines():
+                if line.startswith("# "):
+                    title = line[2:].strip()
+                    break
+            items.append({
+                "slug": slug,
+                "title": title,
+                "tags": frontmatter_list_value(text, "tags"),
+                "sources": frontmatter_list_value(text, "sources"),
+                "updated_at": frontmatter_value(text, "updated_at"),
+                "judgments": extract_wiki_judgments(text),
+            })
+    return {"generated_at": today.isoformat(), "items": items}
+
+
 def list_wiki(wiki_dir: pathlib.Path) -> list[tuple[pathlib.Path, str, int]]:
     """Return list of (path, title, judgment_count) for all wiki topics."""
     rows: list[tuple[pathlib.Path, str, int]] = []
@@ -972,6 +1027,68 @@ def build_publish_prompt(raw_path: pathlib.Path) -> str:
 """
 
 
+def build_publish_checklist(raw_path: pathlib.Path, root: pathlib.Path) -> str:
+    raw_text = read_text(raw_path)
+    status = frontmatter_value(raw_text, "status") or "missing"
+    title = frontmatter_value(raw_text, "title") or raw_path.stem
+    targets = frontmatter_list_value(raw_text, "wiki_targets")
+    matched, unmatched = find_matching_wikis(targets, root / "wiki")
+
+    lines = [
+        f"# Publish Checklist: {title}",
+        "",
+        "## Raw",
+        "",
+        f"- File: `{display_path(raw_path)}`",
+        f"- Status: `{status}`",
+        "",
+        "## 发布前确认",
+        "",
+        "- [ ] 用户已明确确认发布",
+        "- [ ] raw 的 Auto Summary 和 Suggestions 已填充，不含占位符",
+        "- [ ] wiki_targets 已确认",
+    ]
+    if status == "published":
+        lines.append("- [ ] 当前 raw 已是 published，如需重复发布，先确认是增量更新")
+    elif status != "fetched":
+        lines.append(f"- [ ] 当前 raw status 是 `{status}`，发布前应先修正为 `fetched` 或确认生命周期语义")
+
+    lines.extend(["", "## Wiki 目标", ""])
+    if matched:
+        lines.append("应优先更新已有 wiki：")
+        lines.append("")
+        for target, path, wiki_title in matched:
+            lines.append(f"- [ ] `{display_path(path)}`（《{wiki_title}》）← `{target}`")
+    if unmatched:
+        if matched:
+            lines.append("")
+        lines.append("尚无匹配 wiki，发布时建议新建：")
+        lines.append("")
+        for target in unmatched:
+            slug = slugify_topic(target)
+            lines.append(f"- [ ] `wiki/{slug}.md` ← `{target}`")
+    if not targets:
+        lines.append("- [ ] raw 未设置 wiki_targets，先判断更新现有 wiki 还是新建主题")
+
+    lines.extend(
+        [
+            "",
+            "## 发布时必须更新",
+            "",
+            "- [ ] `wiki/*.md`：新增或更新主题笔记，避免按来源建笔记",
+            "- [ ] wiki frontmatter：`status: published`，并把 raw 文件名写入 `sources:`",
+            "- [ ] `index.md`：新增或更新 wiki 入口摘要",
+            "- [ ] `log.md`：记录发布日期、wiki 文件和本次沉淀内容",
+            "- [ ] raw frontmatter：`status: published`",
+            "",
+            "## 发布后验证",
+            "",
+            "- [ ] `python3 scripts/kb.py doctor` 无 ERROR",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def load_role_profile(role_id: str) -> dict:
     config_path = ROOT / "config" / "roles" / f"{role_id}.yaml"
     if not config_path.exists():
@@ -1283,6 +1400,9 @@ def main(argv: list[str]) -> int:
     publish = sub.add_parser("publish-prompt", help="print a publish prompt for a raw note")
     publish.add_argument("raw_file", nargs="?", help="raw note path; defaults to latest raw")
 
+    publish_checklist = sub.add_parser("publish-checklist", help="print a publish checklist for a raw note")
+    publish_checklist.add_argument("raw_file", nargs="?", help="raw note path; defaults to latest raw")
+
     weekly = sub.add_parser("weekly", help="generate weekly report prompt")
     weekly.add_argument("--role", default="technical_practitioner", help="role profile id")
     weekly.add_argument("--output", action="store_true", help="save prompt to reviews/YYYY-WW-prompt.md")
@@ -1381,6 +1501,11 @@ def main(argv: list[str]) -> int:
     if args.command == "publish-prompt":
         raw_path = resolve_raw(args.raw_file)
         print(build_publish_prompt(raw_path))
+        return 0
+
+    if args.command == "publish-checklist":
+        raw_path = resolve_raw(args.raw_file)
+        print(build_publish_checklist(raw_path, ROOT))
         return 0
 
     if args.command == "weekly":
