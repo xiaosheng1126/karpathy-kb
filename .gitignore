@@ -5,3 +5,4 @@ __pycache__/
 .source-reader/
 config.json
 .weekly-cache/
+generated/
