@@ -546,12 +546,14 @@ def extract_wiki_judgments(text: str) -> list[dict]:
 
 def generate_wiki_index(wiki_dir: pathlib.Path, today: dt.datetime) -> dict:
     items: list[dict] = []
+    allowed_status = {"draft", "published"}
     if wiki_dir.exists():
         for path in sorted(wiki_dir.glob("*.md")):
             if path.name == "README.md":
                 continue
             text = read_text(path)
-            if frontmatter_value(text, "status") != "published":
+            status = frontmatter_value(text, "status")
+            if status not in allowed_status:
                 continue
             slug = path.stem
             title = slug
@@ -561,6 +563,7 @@ def generate_wiki_index(wiki_dir: pathlib.Path, today: dt.datetime) -> dict:
                     break
             items.append({
                 "slug": slug,
+                "status": status,
                 "title": title,
                 "tags": frontmatter_list_value(text, "tags"),
                 "sources": frontmatter_list_value(text, "sources"),
@@ -688,9 +691,26 @@ def _index_wiki_links(index_text: str) -> set[str]:
     return links
 
 
+def _index_wiki_lines(index_text: str) -> dict[str, str]:
+    lines: dict[str, str] = {}
+    for line in index_text.splitlines():
+        if line.strip().startswith("<!--"):
+            continue
+        for link in re.findall(r"\[\[wiki/([^\]]+)\]\]", line):
+            linked_name = link if link.endswith(".md") else f"{link}.md"
+            lines[linked_name] = line
+    return lines
+
+
+def _index_line_marks_draft(line: str) -> bool:
+    label = re.sub(r"\[\[wiki/[^\]]+\]\]", "", line)
+    return "draft" in label.lower()
+
+
 def run_doctor(root: pathlib.Path, raw_dir: pathlib.Path) -> list[DoctorIssue]:
     issues: list[DoctorIssue] = []
     allowed_raw_status = {"fetched", "published"}
+    allowed_wiki_status = {"draft", "published"}
 
     if not raw_dir.exists():
         issues.append(DoctorIssue("ERROR", "raw_dir_missing", raw_dir, "raw_dir 不存在"))
@@ -715,6 +735,7 @@ def run_doctor(root: pathlib.Path, raw_dir: pathlib.Path) -> list[DoctorIssue]:
     if not index_text:
         issues.append(DoctorIssue("ERROR", "index_missing", index_path, "index.md 不存在或为空"))
     index_links = _index_wiki_links(index_text)
+    index_lines = _index_wiki_lines(index_text)
     log_path = root / "log.md"
     log_text = read_text(log_path) if log_path.exists() else ""
     if not log_text:
@@ -733,13 +754,18 @@ def run_doctor(root: pathlib.Path, raw_dir: pathlib.Path) -> list[DoctorIssue]:
             if not _frontmatter_block(text):
                 issues.append(DoctorIssue("ERROR", "wiki_frontmatter", path, "wiki 缺少 frontmatter"))
                 continue
-            if frontmatter_value(text, "status") != "published":
-                issues.append(DoctorIssue("ERROR", "wiki_status", path, "wiki status 应为 published"))
-            if frontmatter_value(text, "sources") == "":
+            status = frontmatter_value(text, "status")
+            if status not in allowed_wiki_status:
+                issues.append(DoctorIssue("ERROR", "wiki_status", path, "wiki status 应为 draft/published"))
+            if status == "published" and frontmatter_value(text, "sources") == "":
                 issues.append(DoctorIssue("WARN", "wiki_sources", path, "wiki 缺少 sources 字段"))
             if path.name not in index_links and path.stem not in index_links:
                 issues.append(DoctorIssue("ERROR", "wiki_not_indexed", path, "wiki 未登记到 index.md"))
-            if log_text and path.name not in log_text:
+            elif status == "draft":
+                line = index_lines.get(path.name, "")
+                if not _index_line_marks_draft(line):
+                    issues.append(DoctorIssue("ERROR", "wiki_draft_not_marked", path, "draft wiki 在 index.md 中必须标注 draft"))
+            if status == "published" and log_text and path.name not in log_text:
                 issues.append(DoctorIssue("WARN", "wiki_not_logged", path, "wiki 未出现在 log.md 发布记录中"))
 
     for linked in sorted(index_links):

@@ -1,0 +1,79 @@
+---
+import type { RoleItem } from '../lib/kb-data';
+
+interface Props {
+  roles: RoleItem[];
+}
+
+const { roles } = Astro.props;
+---
+
+<section>
+  <h2>Roles</h2>
+
+  {roles.length === 0 ? (
+    <p class="empty">未找到角色配置</p>
+  ) : (
+    <div class="role-carousel">
+      {roles.map((role) => (
+        <article class="role-card">
+          <h3>{role.display_name}</h3>
+          <p>{role.role_id}</p>
+          {role.focus_areas.length > 0 && (
+            <div class="focus-areas">
+              {role.focus_areas.map((area) => (
+                <span class="tag">{area}</span>
+              ))}
+            </div>
+          )}
+        </article>
+      ))}
+    </div>
+  )}
+</section>
+
+<style>
+  .role-carousel {
+    display: flex;
+    gap: 1rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.35rem;
+  }
+
+  .role-card {
+    flex: 0 0 230px;
+    scroll-snap-align: start;
+    padding: 1rem;
+    background: var(--surface-strong);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .role-card h3 {
+    color: var(--accent);
+    font-size: 1rem;
+  }
+
+  .role-card p {
+    margin-top: 0.15rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  .focus-areas {
+    margin-top: 0.65rem;
+  }
+
+  @media (min-width: 768px) {
+    .role-carousel {
+      flex-wrap: wrap;
+      overflow: visible;
+    }
+
+    .role-card {
+      flex: 1 1 220px;
+    }
+  }
+</style>

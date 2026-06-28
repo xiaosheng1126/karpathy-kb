@@ -1,0 +1,50 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+}
+
+const { title = 'KB Site' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} - KB Site</title>
+  </head>
+  <body>
+    <nav class="site-nav" aria-label="主导航">
+      <a class="brand" href="/">KB Site</a>
+      <a href="/wiki">Wiki</a>
+    </nav>
+    <slot />
+    <footer class="site-footer">Andy 的知识操作台</footer>
+  </body>
+</html>
+
+<style>
+  .site-nav {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    min-height: 56px;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    color: var(--text-primary);
+    font-weight: 700;
+  }
+
+  .site-footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+  }
+</style>

@@ -1,0 +1,78 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { getWikiIndex } from '../../lib/kb-data';
+
+const wikiIndex = getWikiIndex();
+const items = [...wikiIndex.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+---
+
+<Layout title="Wiki">
+  <header class="page-header">
+    <h1>Wiki</h1>
+    <p>{items.length} 篇知识条目，含草稿和已发布主题</p>
+  </header>
+
+  {items.length === 0 ? (
+    <p class="empty">暂无 wiki 条目</p>
+  ) : (
+    <ul class="panel-list">
+      {items.map((item) => (
+        <li class="panel-item">
+          <div class="title-row">
+            <a class="title" href={`/wiki/${item.slug}`}>{item.title}</a>
+            <span class={`status status-${item.status}`}>{item.status}</span>
+          </div>
+          <p>更新于 {item.updated_at} · {item.judgments.length} 条判断</p>
+          <div>
+            {item.tags.map((tag) => <span class="tag">{tag}</span>)}
+          </div>
+        </li>
+      ))}
+    </ul>
+  )}
+</Layout>
+
+<style>
+  .page-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .page-header h1 {
+    font-size: 1.35rem;
+  }
+
+  .page-header p,
+  .panel-item p {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+
+  .title {
+    font-size: 1.02rem;
+    font-weight: 700;
+  }
+
+  .title-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .status {
+    padding: 0.08rem 0.36rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.68rem;
+  }
+
+  .status-draft {
+    color: var(--warning);
+    background: rgba(201, 139, 69, 0.08);
+  }
+
+  .status-published {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+</style>

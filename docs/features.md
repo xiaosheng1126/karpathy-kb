@@ -30,7 +30,7 @@
 | 过期条目标记 deprecated | active | `python3 scripts/kb.py deprecate <file>` 或 `python3 scripts/kb.py aging --confirm` | `scripts/kb.py` | 单元测试 `TestDeprecateRaw`, `TestDeprecateWikiJudgment` |
 | 健康检查 | active | `python3 scripts/kb.py doctor` | `scripts/kb.py` | `python3 scripts/kb.py doctor` |
 | Capture Layer | planned | 未实现 CLI | `docs/architecture.md` | 暂无 |
-| 静态知识操作台 kb-site | planned | 设计中 | `docs/superpowers/specs/2026-06-23-kb-site-phase0-phase1-design.md` | 暂无 |
+| 静态知识操作台 kb-site | active | `python3 scripts/kb.py generate-index` 后 `cd kb-site && npm run build` | `scripts/kb.py`, `kb-site/`, `generated/` | `python3 scripts/kb.py generate-index` + `cd kb-site && npm run build` |
 
 ## 核心工作流
 
@@ -111,6 +111,23 @@ python3 scripts/kb.py deprecate <file> --reason <reason>
 - 已过期内容不删除，只标注 deprecated。
 - `aging --confirm` 是交互写入命令，执行前必须确认不会误改目标文件。
 
+### kb-site
+
+用途：把 wiki、角色和今日队列渲染成只读静态操作台。
+
+入口：
+
+```bash
+python3 scripts/kb.py generate-index
+cd kb-site && npm run build
+```
+
+边界：
+
+- `kb-site` 只读取 `generated/*.json`，不直接读写 `wiki/`、`raw/`、`index.md` 或 `log.md`。
+- `generated/` 和 `kb-site/dist/` 是生成产物，不提交。
+- draft wiki 可以展示，但必须带状态标识，避免误认为已发布长期知识。
+
 ## 外部依赖边界
 
 ### source-reader
@@ -174,6 +191,6 @@ python3 scripts/kb.py <command> --help
 ## 已知缺口
 
 - Capture Layer 仅在架构中定义，尚无 CLI 和持久目录。
-- `kb-site` 仍处于设计阶段，尚未成为当前可用功能。
+- `kb-site` 当前是只读静态操作台，尚未支持页面内执行 CLI 动作。
 - `kb.py raw` 创建的 raw 仍需要 Agent 立即补齐摘要和建议，脚本本身不会自动生成 LLM 内容。
 - `doctor` 检查 raw/wiki/index/log/role 配置闭环，但不验证 Markdown 内容质量。

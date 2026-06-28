@@ -1,0 +1,80 @@
+---
+import type { TodayItem } from '../lib/kb-data';
+
+interface Props {
+  items: TodayItem[];
+}
+
+const { items } = Astro.props;
+const agingItems = items.filter((item) => item.kind === 'aging_judgment');
+const captureItems = items.filter((item) => item.kind === 'unlinked_capture');
+
+function commandFor(action: string, item: TodayItem): string {
+  const slug = item.id.split('#')[0];
+  return `python3 scripts/kb.py ${action} wiki/${slug}.md`;
+}
+---
+
+<section>
+  <h2>Today Queue</h2>
+
+  {agingItems.length > 0 && (
+    <div class="queue-group">
+      <h3>待复审判断</h3>
+      <ul class="queue-list">
+        {agingItems.map((item) => (
+          <li class={`queue-item priority-${item.priority}`}>
+            <span class="item-title">{item.title}</span>
+            {item.judgment_text && <span class="item-detail">{item.judgment_text}</span>}
+            {item.valid_until && <span class="item-meta">有效期：{item.valid_until}</span>}
+            <div class="action-row">
+              {item.actions.map((action) => (
+                <code class="action-hint">{commandFor(action, item)}</code>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )}
+
+  <div class="queue-group">
+    <h3>未关联收藏</h3>
+    {captureItems.length > 0 ? (
+      <ul class="queue-list">
+        {captureItems.map((item) => (
+          <li class={`queue-item priority-${item.priority}`}>
+            <span class="item-title">{item.title}</span>
+            <div class="action-row">
+              {item.actions.map((action) => (
+                <code class="action-hint">{action}</code>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p class="empty">暂无未关联收藏</p>
+    )}
+  </div>
+
+  {agingItems.length === 0 && captureItems.length === 0 && (
+    <p class="empty done">暂无待处理项目</p>
+  )}
+</section>
+
+<style>
+  .queue-group + .queue-group {
+    margin-top: 1rem;
+  }
+
+  h3 {
+    margin-bottom: 0.7rem;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+  }
+
+  .done {
+    margin-top: 0.75rem;
+  }
+</style>

@@ -33,9 +33,18 @@ Wiki Layer（wiki/*.md）
   ↓  [WikiQuery + RoleProfile]
 Output Layer（kb.py weekly / kb.py article）
   ↓  [WeeklyReport / Article / ...]
+
+Quick Capture / Favorites
+  ↓  [CaptureNote v1]
+Capture Layer（captures/*.md 或同步镜像）
+  ↓  [AssociationQuery]
+Association Layer（capture ↔ raw/wiki 显式关系）
+  ↓  [提醒、查看、补链、沉淀入口]
 ```
 
 **单向流原则**：数据从上往下流动。唯一的例外是"往回织"——新 raw 进入时，Knowledge Compiler 回溯更新相关 wiki，但这通过显式触发实现，不是隐式的双向依赖。
+
+**收藏关联原则**：收藏不是 raw，也不是 wiki。收藏层只保存"我看到过什么、为什么先存、它和哪些 raw/wiki 有关系"。建立关联不等于发布知识；只有用户确认后，收藏才可以进入 raw 沉淀流程。
 
 ---
 
@@ -68,6 +77,42 @@ Output Layer（kb.py weekly / kb.py article）
 **不做**：长期知识判断、直接用于对外发布。
 
 状态只有两个：`fetched`（已保存）→ `published`（用户确认后已发布至 wiki）。
+
+---
+
+### Capture Layer
+
+**做**：保存低摩擦收藏，包括 GitHub 项目、网站、工具、文章和临时想法；维护它们与 raw/wiki 的显式关联；暴露未关联提醒队列。
+
+**不做**：保存完整来源内容、替代 raw、自动发布 wiki、静默修改已有知识判断。
+
+Capture 的生命周期独立于 raw/wiki：
+
+```
+captured → linked → archived
+```
+
+| 状态 | 含义 | 系统行为 |
+|------|------|---------|
+| captured | 已收藏，但尚未关联 raw/wiki | 进入未关联提醒队列 |
+| linked | 至少关联一个 raw 或 wiki | 可在 capture、raw、wiki 页面互相查看 |
+| archived | 已确认不再处理 | 默认不进入提醒，但保留历史 |
+
+---
+
+### Association Layer
+
+**做**：维护 capture 与 raw/wiki 的关系索引，支持查看、补链、提醒和后续沉淀入口。
+
+**不做**：根据相似度自动改 wiki，不把弱匹配当成确定关系。
+
+关联必须是显式的、可解释的、可追加的：
+
+- 一个 capture 可以关联多个 raw 和多个 wiki。
+- 一个 raw/wiki 可以被多个 capture 反向引用。
+- 系统可以给出候选关联，但必须标记为 `suggested`，用户确认后才变成 `confirmed`。
+- 已有关联允许追加，不允许因为新匹配覆盖旧关联。
+- 未关联 capture 超过阈值后进入提醒队列，默认 7 天。
 
 ---
 
@@ -168,18 +213,76 @@ related_raws: []                 # 关联 raw 的文件名（无路径）
 
 ---
 
+## Capture Schema v1（新增）
+
+> Capture 是收藏/灵感层 schema，不复用 Raw Schema。它追踪"是否已关联"和"下一步怎么处理"，不是事实源全文。
+
+### Frontmatter
+
+```yaml
+schema_version: "1"
+status: captured                # captured | linked | archived
+type: github                    # github | website | tool | article | idea
+title: ""
+url: ""
+note: ""
+why_saved: ""
+tags: []
+roles: []
+next_action: link_later         # link_later | deposit_later | read_later | archive
+captured_at: ""
+updated_at: ""
+remind_after: ""                # ISO8601 date；为空时按默认 7 天提醒
+
+relations:
+  raws: []                      # raw 文件名，无路径
+  wikis: []                     # wiki 文件名，无路径
+  suggested_raws: []            # 系统候选，未确认
+  suggested_wikis: []           # 系统候选，未确认
+```
+
+### 正文结构
+
+```markdown
+## Note
+
+为什么收藏、当时的上下文、下一步动作。
+
+## Relation Notes
+
+- 2026-06-23: 关联到 wiki/foo.md，因为它补充了 X 主题的工具链判断。
+
+## Snapshot
+
+可选：标题、描述、stars、摘要等轻量快照。不保存完整原文。
+```
+
+### 关联规则
+
+- `status: linked` 的必要条件：`relations.raws` 或 `relations.wikis` 至少一个非空。
+- `relations.suggested_*` 不算已建立关联。
+- 建立或追加关联时，只修改 capture；是否修改 raw/wiki 的反向链接由后续实现决定，但不能破坏现有 raw/wiki schema。
+- 需要沉淀时，capture 只能作为入口，仍然走 `kb.py raw <source>` 或显式 raw 创建流程。
+
+---
+
 ## Wiki Schema v1（锁定）
 
 ### Frontmatter
 
 ```yaml
 schema_version: "1"
-status: published
+status: draft | published
 tags: []
 sources: []                      # 来源 raw 文件名列表
 created_at: ""
 updated_at: ""
 ```
+
+### 状态语义
+
+- `draft`：决策骨架、待补 raw 或待验证主题。可以出现在 `wiki/` 和 `index.md`，但 `index.md` 摘要必须明确标注 draft；不要求出现在 `log.md`。
+- `published`：用户确认后的长期知识。必须出现在 `index.md` 和 `log.md`，并进入站点默认知识视图。
 
 ### 判断条目格式
 
@@ -436,6 +539,7 @@ cold_start_threshold: 3
 - [x] `kb.py aging --confirm`：过期条目一键交互确认并写入 deprecated 标注（已在 v4 实现）
 - [x] 新增 `product_builder` 角色 Profile + 周报模板 + 产品周报指令
 - [x] `kb.py doctor`：检查 raw 状态、wiki/index/log 闭环、角色配置和模板/指令文件
+- [x] `kb.py publish-checklist`：发布前后闭环清单，降低漏改 wiki/index/log/raw status 的概率
 - [x] `kb.py list --aging`：`--aging` flag 输出额外 aging 状态列（`active` / `aging` / `expired` / `-`），复用 `raw_aging_status()` 实现，方便快速扫描知识库健康度
 
 ---

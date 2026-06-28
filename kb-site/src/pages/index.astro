@@ -1,0 +1,109 @@
+---
+import Layout from '../layouts/Layout.astro';
+import RoleCarousel from '../components/RoleCarousel.astro';
+import ReviewQueue from '../components/ReviewQueue.astro';
+import TodayQueue from '../components/TodayQueue.astro';
+import { getRoleIndex, getTodayIndex, getWikiIndex } from '../lib/kb-data';
+
+const wikiIndex = getWikiIndex();
+const roleIndex = getRoleIndex();
+const todayIndex = getTodayIndex();
+const generatedAt = todayIndex.generated_at;
+const wikiItems = [...wikiIndex.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+---
+
+<Layout title="操作台">
+  <header class="hero">
+    <h1>Andy 的知识操作台</h1>
+    <p id="generated-at">数据更新于 {generatedAt}</p>
+  </header>
+
+  <TodayQueue items={todayIndex.items} />
+  <ReviewQueue items={todayIndex.items} />
+  <RoleCarousel roles={roleIndex.roles} />
+
+  <section>
+    <h2>Wiki</h2>
+    {wikiItems.length === 0 ? (
+      <p class="empty">暂无 wiki 条目</p>
+    ) : (
+      <ul class="panel-list">
+        {wikiItems.map((item) => (
+          <li class="wiki-row">
+            <div>
+              <a href={`/wiki/${item.slug}`}>{item.title}</a>
+              <span class={`status status-${item.status}`}>{item.status}</span>
+              <span>{item.updated_at}</span>
+            </div>
+            <div class="tags">
+              {item.tags.map((tag) => <span class="tag">{tag}</span>)}
+            </div>
+          </li>
+        ))}
+      </ul>
+    )}
+  </section>
+</Layout>
+
+<script define:vars={{ generatedAt }}>
+  const el = document.getElementById('generated-at');
+  if (el && Date.now() - new Date(generatedAt).getTime() > 86400000) {
+    el.classList.add('stale');
+    el.textContent += ' （数据可能已过期）';
+  }
+</script>
+
+<style>
+  .hero {
+    margin-bottom: 2rem;
+  }
+
+  .hero h1 {
+    margin-bottom: 0.25rem;
+    font-size: 1.55rem;
+  }
+
+  .hero p {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+
+  .wiki-row {
+    list-style: none;
+  }
+
+  .wiki-row a {
+    font-weight: 600;
+  }
+
+  .wiki-row span {
+    margin-left: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  .wiki-row .status {
+    padding: 0.08rem 0.36rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.68rem;
+  }
+
+  .wiki-row .status-draft {
+    color: var(--warning);
+    background: rgba(201, 139, 69, 0.08);
+  }
+
+  .wiki-row .status-published {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .tags {
+    margin-top: 0.25rem;
+  }
+
+  .tags .tag {
+    margin-left: 0;
+  }
+</style>

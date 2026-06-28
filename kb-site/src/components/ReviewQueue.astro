@@ -1,0 +1,67 @@
+---
+import type { TodayItem } from '../lib/kb-data';
+
+interface Props {
+  items: TodayItem[];
+}
+
+const { items } = Astro.props;
+const expired = items.filter((item) => item.kind === 'aging_judgment' && item.priority === 'high');
+const expiring = items.filter((item) => item.kind === 'aging_judgment' && item.priority === 'medium');
+const hasAny = expired.length > 0 || expiring.length > 0;
+---
+
+<section>
+  <h2>Review Queue</h2>
+
+  {!hasAny && <p class="empty">所有判断均在有效期内</p>}
+
+  {expired.length > 0 && (
+    <div class="review-group">
+      <h3 class="danger">已过期</h3>
+      <ul class="queue-list">
+        {expired.map((item) => (
+          <li class="queue-item priority-high">
+            <span class="item-title">{item.title}</span>
+            {item.judgment_text && <span class="item-detail">{item.judgment_text}</span>}
+            <span class="item-meta">有效期：{item.valid_until}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )}
+
+  {expiring.length > 0 && (
+    <div class="review-group">
+      <h3 class="warning">即将到期（30 天内）</h3>
+      <ul class="queue-list">
+        {expiring.map((item) => (
+          <li class="queue-item priority-medium">
+            <span class="item-title">{item.title}</span>
+            {item.judgment_text && <span class="item-detail">{item.judgment_text}</span>}
+            <span class="item-meta">有效期：{item.valid_until}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )}
+</section>
+
+<style>
+  .review-group + .review-group {
+    margin-top: 1rem;
+  }
+
+  h3 {
+    margin-bottom: 0.7rem;
+    font-size: 0.88rem;
+  }
+
+  .danger {
+    color: var(--danger);
+  }
+
+  .warning {
+    color: var(--warning);
+  }
+</style>

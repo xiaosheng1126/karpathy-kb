@@ -1337,6 +1337,16 @@ class TestDoctor(unittest.TestCase):
             f"# {title}\n"
         )
 
+    def _draft_wiki_text(self, title="Draft Topic"):
+        return (
+            "---\n"
+            "schema_version: \"1\"\n"
+            "status: draft\n"
+            "sources: []\n"
+            "---\n"
+            f"# {title}\n"
+        )
+
     def test_doctor_ok_for_consistent_workspace(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
@@ -1389,6 +1399,25 @@ class TestDoctor(unittest.TestCase):
             (root / "index.md").write_text("[[wiki/topic]] — Topic\n", encoding="utf-8")
             issues = kb.run_doctor(root, raw_dir)
             self.assertTrue(any(issue.code == "wiki_not_logged" for issue in issues))
+
+    def test_doctor_allows_marked_draft_wiki_without_log(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir, wiki_dir = self._setup_root(root)
+            (wiki_dir / "draft-topic.md").write_text(self._draft_wiki_text(), encoding="utf-8")
+            (root / "index.md").write_text("[[wiki/draft-topic]] — 决策型骨架（draft）：待补 raw\n", encoding="utf-8")
+            issues = kb.run_doctor(root, raw_dir)
+            self.assertFalse(any(issue.code == "wiki_status" for issue in issues))
+            self.assertFalse(any(issue.code == "wiki_not_logged" for issue in issues))
+
+    def test_doctor_requires_draft_marker_in_index(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            raw_dir, wiki_dir = self._setup_root(root)
+            (wiki_dir / "draft-topic.md").write_text(self._draft_wiki_text(), encoding="utf-8")
+            (root / "index.md").write_text("[[wiki/draft-topic]] — 待补 raw\n", encoding="utf-8")
+            issues = kb.run_doctor(root, raw_dir)
+            self.assertTrue(any(issue.code == "wiki_draft_not_marked" for issue in issues))
 
     def test_build_doctor_report_ok(self):
         self.assertIn("Doctor OK", kb.build_doctor_report([]))
@@ -1460,11 +1489,23 @@ class TestGenerateWikiIndex(unittest.TestCase):
             result = kb.generate_wiki_index(wiki_dir, today)
             self.assertEqual(result["items"], [])
 
-    def test_skips_unpublished(self):
+    def test_includes_draft_with_status(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             wiki_dir = pathlib.Path(tmpdir)
             (wiki_dir / "draft.md").write_text(
-                "---\nstatus: fetched\nupdated_at: 2026-06-23\n---\n# Draft\n",
+                "---\nstatus: draft\nupdated_at: 2026-06-23\n---\n# Draft\n",
+                encoding="utf-8",
+            )
+            today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)
+            result = kb.generate_wiki_index(wiki_dir, today)
+            self.assertEqual(len(result["items"]), 1)
+            self.assertEqual(result["items"][0]["status"], "draft")
+
+    def test_skips_invalid_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = pathlib.Path(tmpdir)
+            (wiki_dir / "fetched.md").write_text(
+                "---\nstatus: fetched\nupdated_at: 2026-06-23\n---\n# Fetched\n",
                 encoding="utf-8",
             )
             today = dt.datetime(2026, 6, 23, tzinfo=dt.timezone.utc)

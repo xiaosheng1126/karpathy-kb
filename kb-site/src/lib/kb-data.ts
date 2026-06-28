@@ -24,6 +24,7 @@ export interface WikiJudgment {
 
 export interface WikiItem {
   slug: string;
+  status: 'draft' | 'published';
   title: string;
   tags: string[];
   sources: string[];

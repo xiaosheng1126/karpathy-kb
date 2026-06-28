@@ -1,0 +1,111 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { getWikiIndex } from '../../lib/kb-data';
+import type { WikiItem } from '../../lib/kb-data';
+
+export function getStaticPaths() {
+  const wikiIndex = getWikiIndex();
+  return wikiIndex.items.map((item) => ({
+    params: { slug: item.slug },
+    props: { item },
+  }));
+}
+
+interface Props {
+  item: WikiItem;
+}
+
+const { item } = Astro.props;
+---
+
+<Layout title={item.title}>
+  <a class="back-link" href="/wiki">返回 Wiki</a>
+
+  <header class="page-header">
+    <h1>{item.title}</h1>
+    <p>
+      <span class={`status status-${item.status}`}>{item.status}</span>
+      <span>更新于 {item.updated_at}</span>
+    </p>
+    <div>
+      {item.tags.map((tag) => <span class="tag">{tag}</span>)}
+    </div>
+  </header>
+
+  <section>
+    <h2>判断</h2>
+    {item.judgments.length === 0 ? (
+      <p class="empty">暂无结构化判断</p>
+    ) : (
+      <ul class="queue-list">
+        {item.judgments.map((judgment) => (
+          <li class="queue-item priority-low">
+            <span class="item-title">{judgment.text}</span>
+            <span class="item-meta">
+              置信度：{judgment.confidence || '-'}
+              {judgment.valid_until && ` · 有效期：${judgment.valid_until}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    )}
+  </section>
+
+  {item.sources.length > 0 && (
+    <section>
+      <h2>来源</h2>
+      <ul class="source-list">
+        {item.sources.map((source) => <li>{source}</li>)}
+      </ul>
+    </section>
+  )}
+</Layout>
+
+<style>
+  .back-link {
+    display: inline-flex;
+    margin-bottom: 1rem;
+    font-size: 0.86rem;
+  }
+
+  .page-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .page-header h1 {
+    font-size: 1.45rem;
+  }
+
+  .page-header p {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin: 0.2rem 0 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+
+  .status {
+    padding: 0.08rem 0.36rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.68rem;
+  }
+
+  .status-draft {
+    color: var(--warning);
+    background: rgba(201, 139, 69, 0.08);
+  }
+
+  .status-published {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .source-list {
+    padding-left: 1.1rem;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+  }
+</style>
